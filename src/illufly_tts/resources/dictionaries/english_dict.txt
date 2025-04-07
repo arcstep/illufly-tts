@@ -1,0 +1,38 @@
+# 简单英文音素字典
+# 格式：单词 音素序列
+hello hh eh l ow
+world w er l d
+ai ey ay
+api ey p iy ay
+tts t iy t iy eh s
+english ih ng g l ih sh
+chinese ch ay n iy z
+text t eh k s t
+speech s p iy ch
+synthesis s ih n th ah s ih s
+language l ae ng g w ih jh
+phoneme f ow n iy m
+international ih n t er n ae sh ah n ah l
+translation t r ae n s l ey sh ah n
+computer k ah m p y uw t er
+software s ao f t w eh r
+hardware hh aa r d w eh r
+python p ay th aa n
+java jh aa v ah
+javascript jh aa v ah s k r ih p t
+interface ih n t er f ey s
+neural n er ah l
+network n eh t w er k
+machine m ah sh iy n
+learning l er n ih ng
+artificial aa r t ah f ih sh ah l
+intelligence ih n t eh l ah jh ah n s
+development d ih v eh l ah p m ah n t
+programmer p r ow g r ae m er
+engineer eh n jh ah n ih r
+scientist s ay ah n t ih s t
+data d ey t ah
+algorithm ae l g ah r ih dh ah m
+system s ih s t ah m
+architecture aa r k ah t eh k ch er
+component k ah m p ow n ah n t 

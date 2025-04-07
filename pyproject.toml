@@ -1,16 +1,61 @@
-[project]
-name = "illufly-tts"
-version = "0.1.0"
-description = ""
-authors = [
-    {name = "arcstep",email = "43801@qq.com"}
-]
-readme = "README.md"
-requires-python = ">=3.11"
-dependencies = [
-]
-
-
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "illufly-tts"
+version = "0.1.0"
+description = "Text-to-Speech module for Illufly"
+authors = ["arcstep <43801@qq.com>"]
+readme = "README.md"
+packages = [
+    { include = "illufly_tts", from = "src" },
+    { include = "scripts" }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.13"
+fastapi = ">=0.68.0"
+uvicorn = ">=0.15.0"
+python-multipart = ">=0.0.5"
+pydantic = ">=1.8.2"
+python-dotenv = ">=0.19.0"
+loguru = ">=0.5.3"
+kokoro = ">=0.8.1"
+misaki = {version = ">=0.8.1", extras = ["zh"], python = ">=3.11,<3.13"}
+ordered-set = ">=4.1.0"
+pypinyin = {version = ">=0.54.0", python = ">=3.11,<4"}
+soundfile = ">=0.12.1"
+numpy = ">=1.22.0,<2.0.0"
+torch = "==2.2.2"
+aiofiles = ">=0.8.0"
+click = ">=8.0.0"
+mcp = ">=1.6.0,<2.0.0"
+anyio = ">=3.6.0"
+transformers = ">=4.30.0,<4.31.0"
+phonemizer = ">=3.2.0"
+# 英文G2P核心依赖
+g2p-en = ">=2.1.0"  # 英文音素转换库
+langid = ">=1.1.6"  # 语言识别库
+# 可选依赖
+nltk = {version = ">=3.8.1", optional = true}  # 仅用于高级特性
+jieba = "^0.42.1"
+
+[tool.poetry.extras]
+enhanced = ["nltk"]  # 增强功能依赖
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0.0"
+black = "^23.0.0"
+isort = "^5.12.0"
+
+[tool.poetry.scripts]
+tts = "illufly_tts.__main__:main"
+download-model = "scripts.download_model:main"
+quick-start = "scripts.quick_start:main"
+run-tts = "scripts.run_tts:main"  # 添加新的启动脚本入口点
+
+[[tool.poetry.source]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+priority = "primary"

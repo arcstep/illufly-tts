@@ -1,0 +1,41 @@
+# 简单中文拼音音素字典
+# 格式：词语 拼音序列（带音调）
+你好 ni3 hao3
+世界 shi4 jie4
+中国 zhong1 guo2
+北京 bei3 jing1
+上海 shang4 hai3
+广州 guang3 zhou1
+深圳 shen1 zhen4
+人工智能 ren2 gong1 zhi4 neng2
+机器学习 ji1 qi4 xue2 xi2
+自然语言处理 zi4 ran2 yu3 yan2 chu3 li3
+语音合成 yu3 yin1 he2 cheng2
+语音识别 yu3 yin1 shi2 bie2
+计算机 ji4 suan4 ji1
+软件 ruan3 jian4
+硬件 ying4 jian4
+程序员 cheng2 xu4 yuan2
+工程师 gong1 cheng2 shi1
+科学家 ke1 xue2 jia1
+数据 shu4 ju4
+算法 suan4 fa3
+系统 xi4 tong3
+架构 jia4 gou4
+组件 zu3 jian4
+框架 kuang4 jia4
+开发 kai1 fa1
+测试 ce4 shi4
+部署 bu4 shu3
+服务器 fu2 wu4 qi4
+云计算 yun2 ji4 suan4
+大数据 da4 shu4 ju4
+互联网 hu4 lian2 wang3
+人工智能 ren2 gong1 zhi4 neng2
+深度学习 shen1 du4 xue2 xi2
+神经网络 shen2 jing1 wang3 luo4
+强化学习 qiang2 hua4 xue2 xi2
+监督学习 jian1 du1 xue2 xi2
+无监督学习 wu2 jian1 du1 xue2 xi2
+半监督学习 ban4 jian1 du1 xue2 xi2
+迁移学习 qian1 yi2 xue2 xi2 
