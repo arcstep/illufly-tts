@@ -6,7 +6,8 @@ G2P基类 - 文本到音素转换的基础接口
 """
 
 import abc
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Set
+import re
 
 
 class BaseG2P(abc.ABC):
@@ -30,7 +31,7 @@ class BaseG2P(abc.ABC):
         pass
     
     @abc.abstractmethod
-    def get_phoneme_set(self) -> List[str]:
+    def get_phoneme_set(self) -> Set[str]:
         """
         获取当前G2P使用的所有音素集合
         
@@ -49,8 +50,12 @@ class BaseG2P(abc.ABC):
         Returns:
             清理后的文本
         """
-        # 基础实现，移除多余空白
-        return ' '.join(text.split())
+        # 移除多余的空白字符
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # 这里可以添加其他通用的文本清理规则
+        
+        return text
     
     def preprocess_text(self, text: str) -> str:
         """

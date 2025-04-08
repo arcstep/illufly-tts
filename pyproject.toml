@@ -40,6 +40,7 @@ langid = ">=1.1.6"  # 语言识别库
 # 可选依赖
 nltk = {version = ">=3.8.1", optional = true}  # 仅用于高级特性
 jieba = "^0.42.1"
+torchaudio = "2.2.2"
 
 [tool.poetry.extras]
 enhanced = ["nltk"]  # 增强功能依赖

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-TTS系统分步测试脚本 - 用于逐步验证每个组件的效果
+TTS系统分步测试脚本 - 简化版，仅测试G2P和Pipeline
 """
 
 import os
@@ -15,19 +15,36 @@ import json
 from pathlib import Path
 
 import torch
+import torchaudio
 import numpy as np
+
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+logger = logging.getLogger(__name__)
+
+# 添加项目根目录到Python路径
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from src.illufly_tts.utils.logging_config import configure_logging
+
+# 配置更详细的日志
+configure_logging(
+    level=logging.DEBUG,
+    log_file='tests/output/processing/debug.log',
+    debug_modules=[
+        'illufly_tts.g2p.chinese_g2p',
+        'illufly_tts.g2p.mixed_g2p'
+    ]
+)
 
 # 添加src目录到PATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
-from illufly_tts.preprocessing.segmenter import LanguageSegmenter
-from illufly_tts.preprocessing.normalizer import TextNormalizer
-from illufly_tts.preprocessing.zh_normalizer_adapter import ChineseNormalizerAdapter
-from illufly_tts.g2p.mixed_g2p import MixedG2P
-from illufly_tts.g2p.english_g2p import EnglishG2P
 from illufly_tts.g2p.chinese_g2p import ChineseG2P
-from illufly_tts.vocoders.kokoro_adapter import KokoroAdapter, KokoroVoice
-from illufly_tts.pipeline import TTSPipeline, MixedLanguagePipeline
+from illufly_tts.pipeline import TTSPipeline
+from misaki.zh import ZHG2P  # 用于直接比较
 
 # 设置日志格式
 logging.basicConfig(
@@ -82,7 +99,7 @@ class TestResult:
         return result
 
 class TTSComponentTest:
-    """TTS组件测试类"""
+    """TTS组件测试类 - 简化版"""
     
     def __init__(self, output_dir: str, verbose: bool = False):
         """初始化测试
@@ -132,37 +149,26 @@ class TTSComponentTest:
         return file_path
     
     def save_audio(self, name: str, audio: torch.Tensor, sample_rate: int = 24000):
-        """保存音频文件
-        
-        Args:
-            name: 文件名
-            audio: 音频张量
-            sample_rate: 采样率
-        """
-        file_path = self.output_dir / f"{name}.wav"
+        """保存音频文件"""
+        file_path = str(self.output_dir / f"{name}.wav")  # 确保是字符串
         
         try:
-            # 转换为NumPy数组
-            audio_np = audio.cpu().numpy()
+            # 验证音频数据
+            logger.info(f"保存音频 - 类型: {type(audio)}, 形状: {audio.shape if hasattr(audio, 'shape') else 'unknown'}")
+            if not isinstance(audio, torch.Tensor):
+                audio = torch.tensor(audio)
+            if len(audio.shape) == 1:
+                audio = audio.unsqueeze(0)
             
-            # 保存音频
-            try:
-                from scipy.io import wavfile
-                wavfile.write(file_path, sample_rate, audio_np)
-            except ImportError:
-                logger.warning("未找到scipy，尝试使用soundfile")
-                try:
-                    import soundfile as sf
-                    sf.write(file_path, audio_np, sample_rate)
-                except ImportError:
-                    logger.error("无法保存音频，请安装scipy或soundfile")
-                    return None
-                
+            # 使用torchaudio保存音频
+            torchaudio.save(file_path, audio, sample_rate)
             logger.info(f"已保存音频文件: {file_path}")
             return file_path
             
         except Exception as e:
-            logger.error(f"保存音频失败: {e}")
+            logger.error(f"保存音频失败: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def play_audio(self, file_path: Union[str, Path]):
@@ -189,119 +195,6 @@ class TTSComponentTest:
         except Exception as e:
             logger.error(f"播放音频失败: {e}")
     
-    def test_segmenter(self, text: str):
-        """测试语言分段器
-        
-        Args:
-            text: 输入文本
-        """
-        logger.info("=== 测试语言分段器 ===")
-        
-        try:
-            # 初始化分段器
-            segmenter = LanguageSegmenter()
-            
-            # 分段处理
-            start_time = time.time()
-            segments = segmenter.segment(text)
-            duration = time.time() - start_time
-            
-            # 保存分段结果
-            result_text = f"输入文本: {text}\n\n分段结果: {len(segments)}个段落\n"
-            for i, segment in enumerate(segments):
-                result_text += f"\n段落 {i+1}:\n"
-                result_text += f"  语言: {segment['lang']}\n"
-                result_text += f"  文本: {segment['text']}\n"
-            
-            result_text += f"\n处理时间: {duration:.4f}秒"
-            self.save_text_file("segmenter_result", result_text)
-            
-            # 记录测试结果
-            self.log_result(TestResult(
-                name="language_segmenter", 
-                success=True, 
-                data={"segments": len(segments), "time": duration}
-            ))
-            
-            return segments
-            
-        except Exception as e:
-            logger.error(f"测试语言分段器失败: {e}")
-            self.log_result(TestResult(
-                name="language_segmenter", 
-                success=False, 
-                error=str(e)
-            ))
-            return None
-    
-    def test_normalizer(self, text: str):
-        """测试文本规范化器
-        
-        Args:
-            text: 输入文本
-        """
-        logger.info("=== 测试文本规范化器 ===")
-        
-        try:
-            # 初始化规范化器
-            normalizer = TextNormalizer()
-            
-            # 文本规范化
-            start_time = time.time()
-            normalized_text = normalizer.normalize(text)
-            duration = time.time() - start_time
-            
-            # 保存规范化结果
-            result_text = f"输入文本: {text}\n\n规范化结果: \n{normalized_text}\n"
-            result_text += f"\n处理时间: {duration:.4f}秒"
-            self.save_text_file("normalizer_result", result_text)
-            
-            # 记录测试结果
-            self.log_result(TestResult(
-                name="text_normalizer", 
-                success=True, 
-                data={"normalized_text": normalized_text, "time": duration}
-            ))
-            
-            # 测试中文规范化适配器
-            try:
-                chinese_normalizer = ChineseNormalizerAdapter()
-                
-                start_time = time.time()
-                cn_normalized_text = chinese_normalizer.normalize(text)
-                cn_duration = time.time() - start_time
-                
-                # 保存规范化结果
-                result_text = f"输入文本: {text}\n\n中文规范化结果: \n{cn_normalized_text}\n"
-                result_text += f"\n处理时间: {cn_duration:.4f}秒"
-                self.save_text_file("chinese_normalizer_result", result_text)
-                
-                # 记录测试结果
-                self.log_result(TestResult(
-                    name="chinese_normalizer", 
-                    success=True, 
-                    data={"normalized_text": cn_normalized_text, "time": cn_duration}
-                ))
-                
-            except Exception as e:
-                logger.error(f"测试中文规范化适配器失败: {e}")
-                self.log_result(TestResult(
-                    name="chinese_normalizer", 
-                    success=False, 
-                    error=str(e)
-                ))
-            
-            return normalized_text
-            
-        except Exception as e:
-            logger.error(f"测试文本规范化器失败: {e}")
-            self.log_result(TestResult(
-                name="text_normalizer", 
-                success=False, 
-                error=str(e)
-            ))
-            return None
-    
     def test_g2p(self, text: str):
         """测试G2P转换
         
@@ -312,236 +205,148 @@ class TTSComponentTest:
         
         # 测试结果汇总
         result_text = f"输入文本: {text}\n\n"
-        
-        # 测试英文G2P
-        try:
-            english_g2p = EnglishG2P(nltk_data_path=os.path.expanduser("~/.nltk_data"))
-            
-            # 仅处理英文部分
-            english_text = "Hello world, this is a test."
-            
-            start_time = time.time()
-            english_phonemes = english_g2p.text_to_phonemes(english_text)
-            duration = time.time() - start_time
-            
-            result_text += f"英文G2P结果:\n"
-            result_text += f"  输入: {english_text}\n"
-            result_text += f"  音素: {english_phonemes}\n"
-            result_text += f"  时间: {duration:.4f}秒\n\n"
-            
-            # 记录测试结果
-            self.log_result(TestResult(
-                name="english_g2p", 
-                success=True, 
-                data={"phonemes": english_phonemes, "time": duration}
-            ))
-            
-        except Exception as e:
-            logger.error(f"测试英文G2P失败: {e}")
-            result_text += f"英文G2P失败: {e}\n\n"
-            self.log_result(TestResult(
-                name="english_g2p", 
-                success=False, 
-                error=str(e)
-            ))
-        
-        # 测试中文G2P
+
+        # 测试ChineseG2P
         try:
             chinese_g2p = ChineseG2P()
             
-            # 仅处理中文部分
-            chinese_text = "你好，世界。"
-            
             start_time = time.time()
-            chinese_phonemes = chinese_g2p.text_to_phonemes(chinese_text)
-            duration = time.time() - start_time
+            # 1. 首先获取注音格式
+            zhuyin_phonemes = chinese_g2p.text_to_phonemes(text)
+            zhuyin_duration = time.time() - start_time
             
-            result_text += f"中文G2P结果:\n"
-            result_text += f"  输入: {chinese_text}\n"
-            result_text += f"  音素: {chinese_phonemes}\n"
-            result_text += f"  时间: {duration:.4f}秒\n\n"
-            
-            # 记录测试结果
-            self.log_result(TestResult(
-                name="chinese_g2p", 
-                success=True, 
-                data={"phonemes": chinese_phonemes, "time": duration}
-            ))
-            
-        except Exception as e:
-            logger.error(f"测试中文G2P失败: {e}")
-            result_text += f"中文G2P失败: {e}\n\n"
-            self.log_result(TestResult(
-                name="chinese_g2p", 
-                success=False, 
-                error=str(e)
-            ))
-        
-        # 测试混合G2P
-        try:
-            mixed_g2p = MixedG2P(nltk_data_path=os.path.expanduser("~/.nltk_data"))
-            
+            # 2. 获取转换为IPA的结果
             start_time = time.time()
-            mixed_phonemes = mixed_g2p.text_to_phonemes(text)
-            duration = time.time() - start_time
+            ipa_phonemes = chinese_g2p.convert_to_ipa(zhuyin_phonemes)
+            ipa_duration = time.time() - start_time
             
-            result_text += f"混合G2P结果:\n"
+            # 3. 比较用官方ZHG2P的结果
+            try:
+                start_time = time.time()
+                misaki_g2p = ZHG2P()
+                misaki_phonemes, _ = misaki_g2p(text)
+                misaki_duration = time.time() - start_time
+                
+                result_text += f"官方Misaki G2P结果:\n"
+                result_text += f"  输入: {text}\n"
+                result_text += f"  音素: {misaki_phonemes}\n"
+                result_text += f"  时间: {misaki_duration:.4f}秒\n\n"
+            except ImportError:
+                logger.warning("Misaki未安装，跳过官方G2P测试")
+                misaki_phonemes = "N/A"
+                
+            result_text += f"ChineseG2P结果:\n"
             result_text += f"  输入: {text}\n"
-            result_text += f"  音素: {mixed_phonemes}\n"
-            result_text += f"  时间: {duration:.4f}秒\n"
+            result_text += f"  注音格式: {zhuyin_phonemes}\n"
+            result_text += f"  注音耗时: {zhuyin_duration:.4f}秒\n"
+            result_text += f"  IPA格式: {ipa_phonemes}\n"
+            result_text += f"  IPA转换耗时: {ipa_duration:.4f}秒\n\n"
+            result_text += f"格式比较:\n"
+            result_text += f"  官方IPA: {misaki_phonemes}\n"
+            result_text += f"  本地IPA: {ipa_phonemes}\n"
             
             # 记录测试结果
             self.log_result(TestResult(
-                name="mixed_g2p", 
+                name="g2p_test", 
                 success=True, 
-                data={"phonemes": mixed_phonemes, "time": duration}
+                data={
+                    "zhuyin": zhuyin_phonemes,
+                    "ipa": ipa_phonemes,
+                    "misaki_ipa": misaki_phonemes
+                }
             ))
             
             # 保存所有G2P结果
             self.save_text_file("g2p_result", result_text)
             
-            return mixed_phonemes
+            return {
+                "zhuyin": zhuyin_phonemes,
+                "ipa": ipa_phonemes,
+                "misaki_ipa": misaki_phonemes
+            }
             
         except Exception as e:
-            logger.error(f"测试混合G2P失败: {e}")
-            result_text += f"混合G2P失败: {e}\n"
+            logger.error(f"测试G2P失败: {e}")
+            result_text += f"G2P测试失败: {e}\n"
             self.save_text_file("g2p_result", result_text)
             
             self.log_result(TestResult(
-                name="mixed_g2p", 
+                name="g2p_test", 
                 success=False, 
                 error=str(e)
             ))
             return None
     
-    def test_vocoder(self, text: str, model_path: str, voices_dir: str, voice_id: str):
-        """测试语音合成器
+    def test_pipeline(self, text: str, repo_id: str, voices_dir: str, voice_id: str):
+        """测试完整流水线，对比官方KPipeline和自定义TTSPipeline
         
-        Args:
+        Args:   
             text: 输入文本
-            model_path: 模型路径
+            repo_id: 模型ID
             voices_dir: 语音目录
             voice_id: 语音ID
-        """
-        logger.info("=== 测试语音合成器 ===")
-        
-        try:
-            # 先预处理文本
-            normalizer = TextNormalizer()
-            normalized_text = normalizer.normalize(text)
-            
-            # 初始化G2P
-            g2p = MixedG2P()
-            
-            # 初始化语音合成器
-            vocoder = KokoroAdapter(
-                model_path=model_path,
-                voices_dir=voices_dir,
-                g2p=g2p
-            )
-            
-            # 检查语音是否可用
-            available_voices = vocoder.list_voices()
-            if not available_voices:
-                raise ValueError(f"没有可用的语音（目录: {voices_dir}）")
-                
-            logger.info(f"可用语音: {', '.join(available_voices)}")
-            
-            if voice_id not in available_voices:
-                logger.warning(f"指定的语音ID {voice_id} 不可用，使用可用语音: {available_voices[0]}")
-                voice_id = available_voices[0]
-            
-            # 测试生成音频 - 使用官方Pipeline
-            logger.info("使用官方Pipeline生成音频...")
-            start_time = time.time()
-            official_audio = vocoder.generate_audio(
-                text=normalized_text,
-                voice_id=voice_id,
-                use_pipeline=True
-            )
-            official_duration = time.time() - start_time
-            
-            # 保存官方Pipeline生成的音频
-            if official_audio is not None:
-                official_path = self.save_audio("official_audio", official_audio)
-                self.log_result(TestResult(
-                    name="official_vocoder", 
-                    success=True, 
-                    data={"duration": official_duration, "audio_path": str(official_path)}
-                ))
-                
-                # 播放音频
-                self.play_audio(official_path)
-            else:
-                logger.error("官方Pipeline生成音频失败")
-                self.log_result(TestResult(
-                    name="official_vocoder", 
-                    success=False, 
-                    error="生成的音频为空"
-                ))
-            
-            # 测试生成音频 - 使用自定义处理
-            logger.info("使用自定义处理生成音频...")
-            start_time = time.time()
-            custom_audio = vocoder.generate_audio(
-                text=normalized_text,
-                voice_id=voice_id,
-                use_pipeline=False
-            )
-            custom_duration = time.time() - start_time
-            
-            # 保存自定义处理生成的音频
-            if custom_audio is not None:
-                custom_path = self.save_audio("custom_audio", custom_audio)
-                self.log_result(TestResult(
-                    name="custom_vocoder", 
-                    success=True, 
-                    data={"duration": custom_duration, "audio_path": str(custom_path)}
-                ))
-                
-                # 播放音频
-                self.play_audio(custom_path)
-            else:
-                logger.error("自定义处理生成音频失败")
-                self.log_result(TestResult(
-                    name="custom_vocoder", 
-                    success=False, 
-                    error="生成的音频为空"
-                ))
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"测试语音合成器失败: {e}")
-            self.log_result(TestResult(
-                name="vocoder", 
-                success=False, 
-                error=str(e)
-            ))
-            return False
-    
-    def test_pipeline(self, text: str, model_path: str, voices_dir: str, voice_id: str, use_mixed: bool = True):
-        """测试完整流水线
-        
-        Args:
-            text: 输入文本
-            model_path: 模型路径
-            voices_dir: 语音目录
-            voice_id: 语音ID
-            use_mixed: 是否使用混合语言流水线
         """
         logger.info("=== 测试完整流水线 ===")
         
         try:
-            # 选择流水线类型
-            pipeline_class = MixedLanguagePipeline if use_mixed else TTSPipeline
-            pipeline_name = "混合语言流水线" if use_mixed else "标准流水线"
-            
-            logger.info(f"使用{pipeline_name}")
-            
-            # 初始化流水线
-            pipeline = pipeline_class(
-                model_path=model_path,
+            # 1. 首先用官方KPipeline生成音频
+            logger.info("使用官方KPipeline生成音频...")
+            k_start_time = time.time()
+            try:
+                from kokoro import KPipeline
+                # 加载本地声音文件
+                voice_path = os.path.join(voices_dir, f"{voice_id}.pt")
+                voice_tensor = torch.load(voice_path, map_location="cpu", weights_only=True)
+                
+                # 使用本地模型路径和本地声音文件
+                k_pipeline = KPipeline(repo_id=repo_id, lang_code='z')
+                generator = k_pipeline(text, voice=voice_tensor)  # 直接传入声音张量
+                
+                # 记录处理信息
+                k_audio = None
+                k_phonemes = None
+                
+                # 生成音频
+                for i, (gs, ps, audio_data) in enumerate(generator):
+                    logger.info(f"KPipeline返回 - 段落 {i+1}:")
+                    logger.info(f"  文本: {gs}")
+                    logger.info(f"  音素: {ps}")
+                    logger.info(f"  音频: {type(audio_data)}, shape: {audio_data.shape if hasattr(audio_data, 'shape') else 'unknown'}")
+                    
+                    # 只保存第一段
+                    if i == 0:
+                        k_audio = audio_data
+                        k_phonemes = ps
+                    
+                    # 不再继续处理后续段落
+                    break
+                    
+                k_duration = time.time() - k_start_time
+                
+                # 保存KPipeline生成的音频
+                if k_audio is not None:
+                    k_audio_path = self.save_audio("kpipeline_reference", k_audio)
+                    self.log_result(TestResult(
+                        name="kpipeline_reference", 
+                        success=True, 
+                        data={"duration": k_duration, "audio_path": str(k_audio_path)}
+                    ))
+                    logger.info(f"KPipeline生成音频已保存: {k_audio_path}")
+                else:
+                    logger.warning("KPipeline没有生成音频")
+                    
+            except Exception as e:
+                logger.error(f"KPipeline直接调用失败: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                k_audio = None
+                k_phonemes = None
+                k_duration = 0
+
+            # 2. 使用我们的TTSPipeline
+            logger.info("\n使用自定义TTSPipeline处理文本...")
+            pipeline = TTSPipeline(
+                repo_id=repo_id,
                 voices_dir=voices_dir
             )
             
@@ -556,60 +361,91 @@ class TTSComponentTest:
                 logger.warning(f"指定的语音ID {voice_id} 不可用，使用可用语音: {available_voices[0]}")
                 voice_id = available_voices[0]
             
-            # 测试官方Pipeline
-            logger.info("使用官方Pipeline...")
+            # 处理文本生成音频
             start_time = time.time()
-            official_audio = pipeline.text_to_speech(
+            audio = pipeline.process(
                 text=text,
-                voice_id=voice_id,
-                use_official_pipeline=True
+                voice_id=voice_id
             )
-            official_duration = time.time() - start_time
+            process_duration = time.time() - start_time
             
-            # 保存官方Pipeline生成的音频
-            if official_audio is not None:
-                official_path = self.save_audio("official_pipeline", official_audio)
+            logger.info(f"TTSPipeline返回: {type(audio)}, shape: {audio.shape if hasattr(audio, 'shape') else 'unknown'}")
+            
+            # 保存TTSPipeline生成的音频
+            if audio is not None:
+                audio_path = self.save_audio("pipeline_process", audio)
                 self.log_result(TestResult(
-                    name="official_pipeline", 
+                    name="pipeline_process", 
                     success=True, 
-                    data={"duration": official_duration, "audio_path": str(official_path)}
+                    data={"duration": process_duration, "audio_path": str(audio_path)}
                 ))
                 
-                # 播放音频
-                self.play_audio(official_path)
-            else:
-                logger.error("官方Pipeline生成音频失败")
-                self.log_result(TestResult(
-                    name="official_pipeline", 
-                    success=False, 
-                    error="生成的音频为空"
-                ))
-            
-            # 测试自定义Pipeline
-            logger.info("使用自定义Pipeline...")
-            start_time = time.time()
-            custom_audio = pipeline.text_to_speech(
-                text=text,
-                voice_id=voice_id,
-                use_official_pipeline=False
-            )
-            custom_duration = time.time() - start_time
-            
-            # 保存自定义Pipeline生成的音频
-            if custom_audio is not None:
-                custom_path = self.save_audio("custom_pipeline", custom_audio)
-                self.log_result(TestResult(
-                    name="custom_pipeline", 
-                    success=True, 
-                    data={"duration": custom_duration, "audio_path": str(custom_path)}
-                ))
+                # 记录步骤执行详情
+                steps_text = (
+                    f"Pipeline处理过程详情:\n"
+                    f"1. 原始文本: {text}\n"
+                    f"2. 预处理文本: {pipeline.preprocess_text(text)}\n"
+                    f"3. 注音格式: {pipeline.text_to_phonemes(pipeline.preprocess_text(text))}\n"
+                    f"4. IPA格式: {pipeline.phonemes_to_ipa(pipeline.text_to_phonemes(pipeline.preprocess_text(text)))}\n"
+                    f"5. 总处理时间: {process_duration:.4f}秒\n"
+                )
+                self.save_text_file("pipeline_steps", steps_text)
                 
-                # 播放音频
-                self.play_audio(custom_path)
+                # 3. 对比两个结果
+                if k_audio is not None:
+                    # 计算差异 - 如果数组长度不同，选择较短的长度
+                    try:
+                        k_tensor = torch.tensor(k_audio)
+                        if k_tensor.shape != audio.shape:
+                            min_len = min(k_tensor.shape[0], audio.shape[0])
+                            k_tensor = k_tensor[:min_len]
+                            audio_short = audio[:min_len]
+                            
+                            # 计算均方误差
+                            mse = torch.mean((k_tensor - audio_short) ** 2).item()
+                            logger.info(f"音频差异 (MSE): {mse:.6f}")
+                            
+                            # 保存对比结果
+                            comparison_text = (
+                                f"音频对比结果:\n"
+                                f"官方KPipeline音频: {k_audio_path}\n"
+                                f"自定义TTSPipeline音频: {audio_path}\n"
+                                f"音频形状 - 官方: {k_tensor.shape}, 自定义: {audio.shape}\n"
+                                f"计算MSE使用长度: {min_len}\n"
+                                f"均方误差 (MSE): {mse:.10f}\n"
+                                f"官方耗时: {k_duration:.4f}秒\n"
+                                f"自定义耗时: {process_duration:.4f}秒\n"
+                            )
+                            
+                            if k_phonemes is not None:
+                                our_phonemes = pipeline.text_to_phonemes(pipeline.preprocess_text(text))
+                                comparison_text += f"\n音素对比:\n"
+                                comparison_text += f"官方: {k_phonemes}\n"
+                                comparison_text += f"自定义: {our_phonemes}\n"
+                            
+                            self.save_text_file("audio_comparison", comparison_text)
+                            
+                        else:
+                            logger.info("两个音频长度一致，直接计算MSE")
+                            mse = torch.mean((k_tensor - audio) ** 2).item()
+                            logger.info(f"音频差异 (MSE): {mse:.6f}")
+                            
+                    except Exception as e:
+                        logger.error(f"计算音频差异失败: {e}")
+                
+                # 播放两个音频供听觉对比
+                logger.info("\n=== 播放音频对比 ===")
+                if k_audio is not None:
+                    logger.info("播放官方KPipeline生成的音频:")
+                    self.play_audio(k_audio_path)
+                    
+                logger.info("\n播放自定义TTSPipeline生成的音频:")
+                self.play_audio(audio_path)
+                
             else:
-                logger.error("自定义Pipeline生成音频失败")
+                logger.error("TTSPipeline生成音频失败")
                 self.log_result(TestResult(
-                    name="custom_pipeline", 
+                    name="pipeline_process", 
                     success=False, 
                     error="生成的音频为空"
                 ))
@@ -625,12 +461,12 @@ class TTSComponentTest:
             ))
             return False
     
-    def run_all_tests(self, text: str, model_path: str, voices_dir: str, voice_id: str, stage: Optional[str] = None):
+    def run_all_tests(self, text: str, repo_id: str, voices_dir: str, voice_id: str, stage: Optional[str] = None):
         """运行所有测试
         
         Args:
             text: 输入文本
-            model_path: 模型路径
+            repo_id: 模型ID
             voices_dir: 语音目录
             voice_id: 语音ID
             stage: 测试阶段
@@ -638,20 +474,11 @@ class TTSComponentTest:
         logger.info(f"开始测试流程，文本: {text}")
         
         # 根据指定的阶段运行测试
-        if stage == "segmenter" or stage is None:
-            self.test_segmenter(text)
-            
-        if stage == "normalizer" or stage is None:
-            self.test_normalizer(text)
-            
         if stage == "g2p" or stage is None:
             self.test_g2p(text)
             
-        if stage == "vocoder" or stage is None:
-            self.test_vocoder(text, model_path, voices_dir, voice_id)
-            
         if stage == "pipeline" or stage is None:
-            self.test_pipeline(text, model_path, voices_dir, voice_id)
+            self.test_pipeline(text, repo_id, voices_dir, voice_id)
         
         # 总结测试结果
         success_count = sum(1 for result in self.results if result.success)
@@ -690,21 +517,21 @@ def main():
     
     # 模型和语音资源参数
     parser.add_argument(
-        "-m", "--model-path", 
+        "-m", "--repo-id", 
         type=str, 
-        default="./models/kokoro_model",
+        default="hexgrad/Kokoro-82M-v1.1-zh",
         help="Kokoro模型路径"
     )
     parser.add_argument(
         "-v", "--voices-dir", 
         type=str, 
-        default="./models/voices",
+        default="./models/Kokoro-82M-v1.1-zh/voices",
         help="语音目录路径"
     )
     parser.add_argument(
         "--voice-id", 
         type=str, 
-        default=None, 
+        default="zf_001", 
         help="语音ID"
     )
     
@@ -712,14 +539,8 @@ def main():
     parser.add_argument(
         "--stage", 
         type=str, 
-        choices=["segmenter", "normalizer", "g2p", "vocoder", "pipeline"], 
+        choices=["g2p", "pipeline"], 
         help="仅测试指定阶段"
-    )
-    parser.add_argument(
-        "--nltk-data", 
-        type=str, 
-        default="~/.nltk_data", 
-        help="NLTK数据目录路径"
     )
     parser.add_argument(
         "--verbose", 
@@ -731,9 +552,9 @@ def main():
     args = parser.parse_args()
     
     # 检查模型路径和语音目录是否存在
-    if (args.stage == "vocoder" or args.stage == "pipeline" or args.stage is None) and \
-       (not os.path.exists(args.model_path) or not os.path.exists(args.voices_dir)):
-        logger.warning(f"模型路径或语音目录不存在，将跳过需要这些资源的测试阶段")
+    if (args.stage == "pipeline" or args.stage is None) and \
+       (not os.path.exists(args.repo_id)):
+        logger.warning(f"模型ID不存在，将跳过需要这些资源的测试阶段")
         # 设置默认的stage
         if args.stage is None:
             args.stage = "g2p"  # 默认执行到g2p阶段
@@ -748,7 +569,7 @@ def main():
         # 运行测试
         tester.run_all_tests(
             text=args.text,
-            model_path=args.model_path,
+            repo_id=args.repo_id,
             voices_dir=args.voices_dir,
             voice_id=args.voice_id,
             stage=args.stage

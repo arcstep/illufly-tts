@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 # 导入自定义模块
 from illufly_tts.preprocessing.normalizer import TextNormalizer
 from illufly_tts.preprocessing.segmenter import LanguageSegmenter
-from illufly_tts.g2p.mixed_g2p import MixedG2P
+from illufly_tts.g2p.chinese_g2p import ChineseG2P
 
 # 设置日志格式
 logging.basicConfig(

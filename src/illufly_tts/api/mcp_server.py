@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .tts import TTSService
+from ..service import TTSService
 
 logger = logging.getLogger(__name__)
 
