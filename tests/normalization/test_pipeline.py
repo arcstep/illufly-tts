@@ -88,7 +88,7 @@ class TestPipelinePreprocessing:
         assert "价格是" in result
         assert "一千二百三十四点五六元" in result
         assert "百分之七十五" in result
-        assert "一三八一二三四五六七八" in result
+        assert "幺三八幺二三四五六七八" in result
         
     def test_english_with_special_characters(self, mock_pipeline):
         """测试包含特殊符号的英文文本"""
@@ -291,3 +291,65 @@ class TestPipelinePreprocessing:
         assert "Tomorrow" in mixed_result
         assert "可能会下雨" in mixed_result
         assert "Let's wait and see" in mixed_result or "Let us wait and see" in mixed_result
+
+    def test_year_range_processing(self, mock_pipeline):
+        """测试年份范围处理"""
+        # 中文年份范围
+        cn_text = "这个朝代从1644~1911年统治中国。"
+        cn_result = mock_pipeline.preprocess_text(cn_text)
+        assert "一六四四" in cn_result
+        assert "一九一一" in cn_result
+        assert "年" in cn_result
+        
+        # 带连字符的年份范围
+        cn_text2 = "1368-1644年是明朝统治时期"
+        cn_result2 = mock_pipeline.preprocess_text(cn_text2)
+        assert "一三六八" in cn_result2
+        assert "一六四四" in cn_result2
+        assert "年是明朝统治时期" in cn_result2
+        
+        # 英文年份范围
+        en_text = "The Ming Dynasty ruled from 1368 to 1644."
+        en_result = mock_pipeline.preprocess_text(en_text)
+        assert "thirteen sixty eight" in en_result.lower() or "one thousand three hundred sixty eight" in en_result.lower()
+        assert "sixteen forty four" in en_result.lower() or "one thousand six hundred forty four" in en_result.lower()
+        
+        # 混合语言年份范围
+        mixed_text = "从1368年到1644年，The Ming Dynasty ruled China."
+        mixed_result = mock_pipeline.preprocess_text(mixed_text)
+        assert "一三六八年" in mixed_result
+        assert "一六四四年" in mixed_result
+        assert "The Ming Dynasty ruled China" in mixed_result
+
+    def test_protect_special_formats(self):
+        """测试特殊格式（邮箱、URL等）的保护和恢复功能"""
+        test_cases = [
+            # 测试邮箱地址
+            "请联系support@example.com获取帮助",
+            "Multiple emails: user1@domain.com and user2@domain.com",
+            
+            # 测试URL
+            "访问https://www.example.com了解更多",
+            "Mixed content with http://short.url and https://longer.domain.com/path",
+            
+            # 测试混合内容
+            "发邮件到admin@company.com或访问https://company.com/contact",
+            "Contact info@example.com or visit http://example.com for details"
+        ]
+        
+        pipeline = TTSPipeline()
+        
+        for test_input in test_cases:
+            # 处理文本
+            processed = pipeline.preprocess(test_input)
+            
+            # 验证原始特殊格式是否保持不变
+            if "@" in test_input:
+                assert "@" in processed
+            if "http" in test_input:
+                assert "http" in processed
+                
+            # 验证处理后的文本与输入文本在特殊格式部分完全相同
+            for word in test_input.split():
+                if "@" in word or "http" in word:
+                    assert word in processed

@@ -204,7 +204,7 @@ class TTSPipeline:
         pattern = re.compile(
             r'([\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+)|'  # 中文字符
             r'([a-zA-Z]+(?:[\s\-\'"][a-zA-Z]+)*)|'  # 英文单词
-            r'(\d+(?:\.\d+)?)|'  # 数字
+            r'((?:气温)?-?\d+(?:\.\d+)?(?:°C|℃|度|摄氏度)?)|'  # 数字（包括温度相关文本）
             r'([\u2000-\u206F\u2E00-\u2E7F\'!"#$%&\(\)*+,\-.\/:;<=>?@\[\]^_`{|}~]+)'  # 标点符号
         )
         
@@ -220,16 +220,19 @@ class TTSPipeline:
                 chunks.append(('zh', match.group(1)))
             elif match.group(2):  # 英文
                 chunks.append(('en', match.group(2)))
-            elif match.group(3):  # 数字
-                # 检查数字的上下文
+            elif match.group(3):  # 数字（可能包含温度单位）
+                # 检查数字的上下文和是否包含温度单位
+                number_text = match.group(3)
+                has_temp_unit = any(unit in number_text for unit in ['°C', '℃', '度', '摄氏度', '气温'])
+                
                 prev_type = chunks[-1][0] if chunks else None
                 next_char = text[match.end():match.end()+1]
                 
-                # 如果数字后面跟着中文单位（年月日等）或前面是中文，按中文处理
-                if (next_char and '\u4e00' <= next_char <= '\u9fff') or prev_type == 'zh':
-                    chunks.append(('zh', match.group(3)))
+                # 如果数字包含温度单位，或者前后有中文，按中文处理
+                if has_temp_unit or (next_char and '\u4e00' <= next_char <= '\u9fff') or prev_type == 'zh':
+                    chunks.append(('zh', number_text))
                 else:
-                    chunks.append(('en', match.group(3)))
+                    chunks.append(('en', number_text))
             else:  # 标点符号
                 # 根据前后文判断标点符号归属
                 prev_type = chunks[-1][0] if chunks else None

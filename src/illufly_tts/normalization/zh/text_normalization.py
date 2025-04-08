@@ -15,44 +15,21 @@ import re
 from typing import List
 
 from .char_convert import tranditional_to_simplified
-from .chronology import RE_DATE
-from .chronology import RE_DATE2
-from .chronology import RE_TIME
-from .chronology import RE_TIME_RANGE
-from .chronology import replace_date
-from .chronology import replace_date2
-from .chronology import replace_time
-from .constants import F2H_ASCII_LETTERS
-from .constants import F2H_DIGITS
-from .constants import F2H_SPACE
-from .num import RE_DECIMAL_NUM
-from .num import RE_DEFAULT_NUM
-from .num import RE_FRAC
-from .num import RE_INTEGER
-from .num import RE_NUMBER
-from .num import RE_PERCENTAGE
-from .num import RE_POSITIVE_QUANTIFIERS
-from .num import RE_RANGE
-from .num import replace_default_num
-from .num import replace_frac
-from .num import replace_negative_num
-from .num import replace_number
-from .num import replace_percentage
-from .num import replace_positive_quantifier
-from .num import replace_range
-from .phonecode import RE_MOBILE_PHONE
-from .phonecode import RE_NATIONAL_UNIFORM_NUMBER
-from .phonecode import RE_TELEPHONE
-from .phonecode import replace_mobile
-from .phonecode import replace_phone
-from .quantifier import RE_TEMPERATURE
-from .quantifier import replace_measure
-from .quantifier import replace_temperature
+from .chronology import RE_DATE, RE_DATE2, RE_TIME, RE_TIME_RANGE, RE_YEAR_RANGE
+from .chronology import replace_date, replace_date2, replace_time, replace_year_range
+from .constants import F2H_ASCII_LETTERS, F2H_DIGITS, F2H_SPACE
+from .num import RE_DECIMAL_NUM, RE_DEFAULT_NUM, RE_FRAC, RE_INTEGER, RE_NUMBER
+from .num import RE_PERCENTAGE, RE_POSITIVE_QUANTIFIERS, RE_RANGE
+from .num import replace_default_num, replace_frac, replace_negative_num, replace_number
+from .num import replace_percentage, replace_positive_quantifier, replace_range
+from .phonecode import RE_MOBILE_PHONE, RE_NATIONAL_UNIFORM_NUMBER, RE_TELEPHONE
+from .phonecode import replace_mobile, replace_phone
+from .quantifier import RE_TEMPERATURE, replace_measure, replace_temperature
 
 
 class ZhTextNormalizer():
     def __init__(self):
-        self.SENTENCE_SPLITOR = re.compile(r'([：、，；。？！,;?!][”’]?)')
+        self.SENTENCE_SPLITOR = re.compile(r'([：、，；。？！,;?!][""'']?)')
 
     def _split(self, text: str, lang="zh") -> List[str]:
         """Split long text into sentences with sentence-splitting punctuations.
@@ -65,7 +42,7 @@ class ZhTextNormalizer():
         if lang == "zh":
             text = text.replace(" ", "")
             # 过滤掉特殊字符
-            text = re.sub(r'[——《》【】<=>{}()（）#&@“”^_|…\\]', '', text)
+            text = re.sub(r'[——《》【】<=>{}()（）#&@""^_|…\\]', '', text)
         text = self.SENTENCE_SPLITOR.sub(r'\1\n', text)
         text = text.strip()
         sentences = [sentence.strip() for sentence in re.split(r'\n+', text)]
@@ -111,7 +88,7 @@ class ZhTextNormalizer():
         sentence = sentence.replace('ψ', '普赛').replace('Ψ', '普赛')
         sentence = sentence.replace('ω', '欧米伽').replace('Ω', '欧米伽')
         # re filter special characters, have one more character "-" than line 68
-        sentence = re.sub(r'[-——《》【】<=>{}()（）#&@“”^_|…\\]', '', sentence)
+        sentence = re.sub(r'[-——《》【】<=>{}()（）#&@""^_|…\\]', '', sentence)
         return sentence
 
     def normalize_sentence(self, sentence: str) -> str:
@@ -121,6 +98,7 @@ class ZhTextNormalizer():
             F2H_DIGITS).translate(F2H_SPACE)
 
         # number related NSW verbalization
+        sentence = RE_YEAR_RANGE.sub(replace_year_range, sentence)
         sentence = RE_DATE.sub(replace_date, sentence)
         sentence = RE_DATE2.sub(replace_date2, sentence)
 
@@ -128,7 +106,9 @@ class ZhTextNormalizer():
         sentence = RE_TIME_RANGE.sub(replace_time, sentence)
         sentence = RE_TIME.sub(replace_time, sentence)
 
+        # 将温度处理移到其他数字处理之前
         sentence = RE_TEMPERATURE.sub(replace_temperature, sentence)
+        
         sentence = replace_measure(sentence)
         sentence = RE_FRAC.sub(replace_frac, sentence)
         sentence = RE_PERCENTAGE.sub(replace_percentage, sentence)
@@ -144,6 +124,7 @@ class ZhTextNormalizer():
                                                sentence)
         sentence = RE_DEFAULT_NUM.sub(replace_default_num, sentence)
         sentence = RE_NUMBER.sub(replace_number, sentence)
+        
         sentence = self._post_replace(sentence)
 
         return sentence

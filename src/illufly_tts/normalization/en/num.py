@@ -16,7 +16,7 @@ RE_DECIMAL_NUM = re.compile(r'(-?)(\d+)\.(\d+)')
 RE_NUMBER = re.compile(r'(-?)(\d+)(?:\.(\d+))?')
 
 # 分数表达式
-RE_FRACTION = re.compile(r'(-?)(\d+)/(\d+)')
+RE_FRACTION = re.compile(r'(-??\d+)/(\d+)')
 
 # 百分比表达式
 RE_PERCENTAGE = re.compile(r'(-?)(\d+(?:\.\d+)?)%')
@@ -52,7 +52,7 @@ def verbalize_number(num_str: str) -> str:
         if ones == '0':
             return TENS_MAP[tens]
         else:
-            return TENS_MAP[tens] + '-' + DIGIT_MAP[ones]
+            return f"{TENS_MAP[tens]} {DIGIT_MAP[ones]}"
     
     # 处理三位数
     if len(num_str) == 3:
@@ -153,14 +153,59 @@ def replace_fraction(match) -> str:
     Returns:
         处理后的文本
     """
-    sign, numerator, denominator = match.groups()
+    numerator, denominator = match.groups()
     
-    numerator_text = verbalize_number(numerator)
-    denominator_text = verbalize_number(denominator)
+    # 使用负数标记
+    is_negative = False
+    if numerator.startswith('-'):
+        is_negative = True
+        numerator = numerator[1:]
     
-    if sign:
-        return f"negative {numerator_text} over {denominator_text}"
-    return f"{numerator_text} over {denominator_text}"
+    num_int = int(numerator)
+    denom_int = int(denominator)
+    
+    # 处理特殊分母
+    if denom_int == 2:
+        if num_int == 1:
+            return 'negative one half' if is_negative else 'one half'
+        else:
+            num_text = verbalize_number(numerator)
+            return f"negative {num_text} halves" if is_negative else f"{num_text} halves"
+    elif denom_int == 3:
+        if num_int == 1:
+            return 'negative one third' if is_negative else 'one third'
+        else:
+            num_text = verbalize_number(numerator)
+            return f"negative {num_text} thirds" if is_negative else f"{num_text} thirds"
+    elif denom_int == 4:
+        if num_int == 1:
+            return 'negative one quarter' if is_negative else 'one quarter'
+        elif num_int == 3:
+            return 'negative three quarters' if is_negative else 'three quarters'
+        else:
+            num_text = verbalize_number(numerator)
+            return f"negative {num_text} quarters" if is_negative else f"{num_text} quarters"
+    
+    # 处理一般情况
+    num_text = verbalize_number(numerator)
+    denom_text = verbalize_ordinal(denom_int)
+    
+    if num_int == 1:
+        return f"negative one {denom_text}" if is_negative else f"one {denom_text}"
+    else:
+        # 处理复数形式
+        if denom_text.endswith('th'):
+            plural_denom_text = f"{denom_text}s"
+        elif denom_text.endswith('first'):
+            plural_denom_text = denom_text.replace('first', 'firsts')
+        elif denom_text.endswith('second'):
+            plural_denom_text = denom_text.replace('second', 'seconds')
+        elif denom_text.endswith('third'):
+            plural_denom_text = denom_text.replace('third', 'thirds')
+        else:
+            plural_denom_text = f"{denom_text}s"
+        
+        return f"negative {num_text} {plural_denom_text}" if is_negative else f"{num_text} {plural_denom_text}"
 
 
 def replace_percentage(match) -> str:

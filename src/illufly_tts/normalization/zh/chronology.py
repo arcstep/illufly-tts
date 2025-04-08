@@ -113,6 +113,48 @@ def replace_date(match) -> str:
 RE_DATE2 = re.compile(
     r'(\d{4})([- /.])(0[1-9]|1[012])\2(0[1-9]|[12][0-9]|3[01])')
 
+# 年份范围表达式
+RE_YEAR_RANGE = re.compile(r'(\d{4})[-~](\d{4})')
+
+def replace_year_range(match) -> str:
+    """处理年份范围
+    
+    Args:
+        match: 正则匹配对象
+        
+    Returns:
+        处理后的文本
+    """
+    start_year, end_year = match.groups()
+    
+    # 处理起始年份
+    if start_year.startswith('19'):
+        start_text = f"一九{verbalize_digit(start_year[2:])}年"
+    elif start_year.startswith('20'):
+        if start_year[2:] == '00':
+            start_text = "二零零零年"
+        elif start_year[2] == '0':
+            start_text = f"二零零{verbalize_digit(start_year[3])}年"
+        else:
+            start_text = f"二零{verbalize_digit(start_year[2:])}年"
+    else:
+        start_text = f"{verbalize_digit(start_year)}年"
+    
+    # 处理结束年份
+    if end_year.startswith('19'):
+        end_text = f"一九{verbalize_digit(end_year[2:])}年"
+    elif end_year.startswith('20'):
+        if end_year[2:] == '00':
+            end_text = "二零零零年"
+        elif end_year[2] == '0':
+            end_text = f"二零零{verbalize_digit(end_year[3])}年"
+        else:
+            end_text = f"二零{verbalize_digit(end_year[2:])}年"
+    else:
+        end_text = f"{verbalize_digit(end_year)}年"
+    
+    return f"{start_text}至{end_text}"
+
 
 def replace_date2(match) -> str:
     """
