@@ -8,13 +8,14 @@ TTS系统的完整流水线 - 直接使用KModel实现
 import os
 import re
 import logging
+import functools
 from typing import Dict, List, Optional, Union, Tuple, Any, Generator
 import torch
 
 from .g2p.chinese_g2p import ChineseG2P
 from .g2p.english_g2p import EnglishG2P
 from .normalization import ZhTextNormalizer, EnTextNormalizer
-from kokoro.model import KModel  # 仅依赖KModel，不使用KPipeline
+from .kmodel import BatchKModel  # 仅依赖KModel，不使用KPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class TTSPipeline:
         self,
         repo_id: str,
         voices_dir: str,
-        device: str = "cpu"
+        device: str = None
     ):
         """初始化TTS流水线
         
@@ -53,8 +54,16 @@ class TTSPipeline:
         self.en_normalizer = EnTextNormalizer()
         
         # 直接加载KModel
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                device = "mps"  # M系列芯片
+            else:
+                device = "cpu"
+        self.device = device
         logger.info(f"正在加载KModel (repo_id={repo_id})")
-        self.model = KModel(repo_id=repo_id).to(device).eval()
+        self.model = BatchKModel(repo_id=repo_id).to(device).eval()
         
         # 语音包字典
         self.voices = {}
@@ -516,3 +525,219 @@ class TTSPipeline:
                 ipa_result.append(word)
         
         return ''.join(ipa_result)
+
+    def batch_process_texts(
+        self,
+        texts: List[str],
+        voice_ids: List[str],
+        speeds: Optional[List[float]] = None,
+    ) -> List[torch.Tensor]:
+        """优化缓存的批量处理多条文本"""
+        if speeds is None:
+            speeds = [1.0] * len(texts)
+        
+        # 去重文本和语音ID，减少重复处理
+        unique_texts = {}
+        unique_voice_ids = set()
+        
+        for i, text in enumerate(texts):
+            unique_texts[text] = unique_texts.get(text, []) + [i]
+            unique_voice_ids.add(voice_ids[i])
+        
+        # 预热缓存 - 批量加载语音包
+        for voice_id in unique_voice_ids:
+            self.load_voice(voice_id)
+        
+        # 批量预处理文本（利用缓存）
+        normalized_texts = [self.preprocess_text(text) for text in texts]
+        
+        # 批量转换为音素
+        phonemes_list = [self.text_to_phonemes(text) for text in normalized_texts]
+        
+        # 批量转换为IPA
+        ipa_phonemes_list = [self.phonemes_to_ipa(phonemes) for phonemes in phonemes_list]
+        
+        # 批量准备语音嵌入（利用缓存）
+        ref_embeddings = []
+        for i, voice_id in enumerate(voice_ids):
+            voice_pack = self.load_voice(voice_id)
+            phonemes_len = len(ipa_phonemes_list[i])
+            voice_embedding = voice_pack[min(phonemes_len-1, len(voice_pack)-1)]
+            ref_embeddings.append(voice_embedding)
+        
+        ref_s_batch = torch.stack(ref_embeddings)
+        
+        # 使用BatchKModel批量生成音频
+        with torch.no_grad():
+            audio_outputs = self.model.forward_batch(
+                ipa_phonemes_list,
+                ref_s_batch,
+                speeds
+            )
+        
+        return audio_outputs
+        
+    def stream_batch_process(
+        self,
+        long_texts: List[str],
+        voice_ids: List[str],
+        speeds: Optional[List[float]] = None,
+        chunk_size: int = 200
+    ) -> Generator[List[torch.Tensor], None, None]:
+        """流式批量处理长文本
+        
+        Args:
+            long_texts: 长文本列表
+            voice_ids: 对应的语音ID列表
+            speeds: 对应的语速列表
+            chunk_size: 文本分块大小
+            
+        Yields:
+            每批次生成的音频列表
+        """
+        if speeds is None:
+            speeds = [1.0] * len(long_texts)
+            
+        # 将长文本分割成多个块
+        text_chunks_list = [self.segment_text(text, chunk_size) for text in long_texts]
+        
+        # 找出最大块数
+        max_chunks = max(len(chunks) for chunks in text_chunks_list)
+        
+        # 按块处理，确保每个文本都有对应的块
+        for i in range(max_chunks):
+            current_chunks = []
+            current_voice_ids = []
+            current_speeds = []
+            
+            for text_idx, chunks in enumerate(text_chunks_list):
+                if i < len(chunks):
+                    current_chunks.append(chunks[i])
+                    current_voice_ids.append(voice_ids[text_idx])
+                    current_speeds.append(speeds[text_idx])
+            
+            if current_chunks:
+                # 生成当前批次的音频
+                batch_audios = self.batch_process_texts(
+                    current_chunks,
+                    current_voice_ids,
+                    current_speeds
+                )
+                
+                yield batch_audios
+
+class CachedTTSPipeline(TTSPipeline):
+    """优化的TTS流水线，使用缓存提高性能"""
+    
+    def __init__(
+        self,
+        repo_id: str,
+        voices_dir: str,
+        device: str = "cpu",
+        voice_cache_size: int = 32,    # 语音包缓存大小
+        text_cache_size: int = 1024,   # 文本处理缓存大小
+        phoneme_cache_size: int = 1024 # 音素处理缓存大小
+    ):
+        """初始化带缓存的TTS流水线
+        
+        Args:
+            repo_id: 模型ID或路径
+            voices_dir: 语音目录
+            device: 设备名称
+            voice_cache_size: 语音包缓存大小
+            text_cache_size: 文本处理缓存大小
+            phoneme_cache_size: 音素处理缓存大小
+        """
+        super().__init__(repo_id, voices_dir, device)
+        
+        # 重新设置带缓存的方法
+        self.load_voice = functools.lru_cache(maxsize=voice_cache_size)(self._uncached_load_voice)
+        self._cached_preprocess_text = functools.lru_cache(maxsize=text_cache_size)(self._uncached_preprocess_text)
+        self._cached_text_to_phonemes = functools.lru_cache(maxsize=phoneme_cache_size)(self._uncached_text_to_phonemes)
+        self._cached_phonemes_to_ipa = functools.lru_cache(maxsize=phoneme_cache_size)(self._uncached_phonemes_to_ipa)
+        
+        # 缓存统计
+        self.cache_stats = {
+            "voice_hits": 0,
+            "voice_misses": 0,
+            "text_hits": 0,
+            "text_misses": 0,
+            "phoneme_hits": 0,
+            "phoneme_misses": 0,
+            "ipa_hits": 0,
+            "ipa_misses": 0
+        }
+    
+    def _uncached_load_voice(self, voice_id: str) -> torch.FloatTensor:
+        """未缓存的语音包加载（被缓存装饰器包装）"""
+        self.cache_stats["voice_misses"] += 1
+        return super().load_voice(voice_id)
+    
+    def _uncached_preprocess_text(self, text: str) -> str:
+        """未缓存的文本预处理（被缓存装饰器包装）"""
+        self.cache_stats["text_misses"] += 1
+        return super().preprocess_text(text)
+    
+    def _uncached_text_to_phonemes(self, text: str) -> str:
+        """未缓存的文本到音素转换（被缓存装饰器包装）"""
+        self.cache_stats["phoneme_misses"] += 1
+        return super().text_to_phonemes(text)
+    
+    def _uncached_phonemes_to_ipa(self, phonemes: str) -> str:
+        """未缓存的音素到IPA转换（被缓存装饰器包装）"""
+        self.cache_stats["ipa_misses"] += 1
+        return super().phonemes_to_ipa(phonemes)
+    
+    def preprocess_text(self, text: str) -> str:
+        """智能缓存版本的文本预处理"""
+        # 对于过长的文本，不使用缓存
+        if len(text) > 500:
+            return self._uncached_preprocess_text(text)
+        
+        # 对于短文本，先检查缓存
+        result = self._cached_preprocess_text(text)
+        self.cache_stats["text_hits"] += 1
+        return result
+    
+    def text_to_phonemes(self, text: str) -> str:
+        """智能缓存版本的文本到音素转换"""
+        # 对于过长的文本，不使用缓存
+        if len(text) > 500:
+            return self._uncached_text_to_phonemes(text)
+        
+        # 对于短文本，先检查缓存
+        result = self._cached_text_to_phonemes(text)
+        self.cache_stats["phoneme_hits"] += 1
+        return result
+    
+    def phonemes_to_ipa(self, phonemes: str) -> str:
+        """智能缓存版本的音素到IPA转换"""
+        # 对于过长的音素序列，不使用缓存
+        if len(phonemes) > 500:
+            return self._uncached_phonemes_to_ipa(phonemes)
+        
+        # 对于短音素序列，先检查缓存
+        result = self._cached_phonemes_to_ipa(phonemes)
+        self.cache_stats["ipa_hits"] += 1
+        return result
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """获取缓存统计信息"""
+        # 计算命中率
+        for cache_type in ["voice", "text", "phoneme", "ipa"]:
+            hits = self.cache_stats[f"{cache_type}_hits"]
+            misses = self.cache_stats[f"{cache_type}_misses"]
+            total = hits + misses
+            if total > 0:
+                self.cache_stats[f"{cache_type}_hit_rate"] = hits / total
+            else:
+                self.cache_stats[f"{cache_type}_hit_rate"] = 0
+                
+        return self.cache_stats
+    
+    def clear_caches(self):
+        """清除所有缓存"""
+        self.load_voice.cache_clear()
+        self._cached_preprocess_text.cache_clear()
+        self._cached_text_to_phonemes.cache_clear()
+        self._cached_phonemes_to_ipa.cache_clear()
