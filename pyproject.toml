@@ -9,8 +9,7 @@ description = "Text-to-Speech module for Illufly"
 authors = ["arcstep <43801@qq.com>"]
 readme = "README.md"
 packages = [
-    { include = "illufly_tts", from = "src" },
-    { include = "scripts" }
+    { include = "illufly_tts", from = "src" }
 ]
 
 [tool.poetry.dependencies]
@@ -42,9 +41,6 @@ nltk = {version = ">=3.8.1", optional = true}  # 仅用于高级特性
 jieba = "^0.42.1"
 torchaudio = "2.2.2"
 
-[tool.poetry.extras]
-enhanced = ["nltk"]  # 增强功能依赖
-
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
 black = "^23.0.0"
@@ -53,9 +49,6 @@ pytest-asyncio = "0.21.1"
 
 [tool.poetry.scripts]
 tts = "illufly_tts.__main__:main"
-download-model = "scripts.download_model:main"
-quick-start = "scripts.quick_start:main"
-run-tts = "scripts.run_tts:main"  # 添加新的启动脚本入口点
 
 [[tool.poetry.source]]
 name = "aliyun"

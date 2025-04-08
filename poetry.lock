@@ -4295,10 +4295,7 @@ type = "legacy"
 url = "https://mirrors.aliyun.com/pypi/simple"
 reference = "aliyun"
 
-[extras]
-enhanced = ["nltk"]
-
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.13"
-content-hash = "d13b34ac18b33f87ec22e20f6712f3031db0f5cd93bd4bec230e65b58253f65c"
+content-hash = "6e295cbad911e645f902ca9bc35d2cdd16ab138a43ccdaab7f9f6a5133329491"

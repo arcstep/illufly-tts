@@ -64,10 +64,8 @@ class TTSServiceManager:
         self.tasks = {}  # 所有任务字典：task_id -> TTSTask
         self.task_queue = asyncio.Queue()  # 待处理任务队列
         
-        # 启动批处理循环
-        self.processing_task = asyncio.create_task(self._batch_processing_loop())
-        
         self.output_dir = output_dir
+        self.processing_task = None  # 初始化时不创建任务
         
     async def submit_task(self, text: str, voice_id: str, speed: float = 1.0, user_id: Optional[str] = None) -> str:
         """提交一个TTS任务
@@ -190,8 +188,9 @@ class TTSServiceManager:
             yield task.audio_chunks[current_index]
             current_index += 1
     
-    def start(self): # 添加 start 方法以在 fixture 外部启动循环
-        if not hasattr(self, 'processing_task') or self.processing_task.done():
+    async def start(self):
+        """异步启动服务"""
+        if not self.processing_task or self.processing_task.done():
             logger.info("开始批处理循环...")
             self.processing_task = asyncio.create_task(self._batch_processing_loop())
             logger.info("批处理循环已启动")
@@ -298,7 +297,7 @@ class TTSServiceManager:
                 # 添加超时，防止无限等待
                 try:
                     chunk_results = await asyncio.wait_for(
-                        self.pipeline.batch_process_texts(texts, voice_ids, speeds),
+                        self.pipeline.async_batch_process_texts(texts, voice_ids, speeds),
                         timeout=10.0
                     )
                     
