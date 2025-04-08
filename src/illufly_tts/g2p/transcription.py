@@ -235,7 +235,7 @@ def apply_tone(variants: List[Tuple[str, ...]], tone: int) -> Generator[Tuple[st
   yield from (
     tuple(phoneme.replace("0", tone_ipa) for phoneme in variant)
     for variant in variants
-   )
+  )
 
 
 def pinyin_to_ipa(pinyin: str) -> OrderedSet[Tuple[str, ...]]:

@@ -13,6 +13,7 @@ import torch
 
 from .g2p.chinese_g2p import ChineseG2P
 from .g2p.english_g2p import EnglishG2P
+from .normalization import ZhTextNormalizer, EnTextNormalizer
 from kokoro.model import KModel  # 仅依赖KModel，不使用KPipeline
 
 logger = logging.getLogger(__name__)
@@ -32,9 +33,6 @@ class TTSPipeline:
             repo_id: 模型ID或路径
             voices_dir: 语音目录
             device: 设备名称
-            segmenter_class: 分割器类
-            normalizer_class: 规范化器类
-            g2p_class: G2P类
         """
         self.repo_id = repo_id
         self.voices_dir = voices_dir
@@ -49,6 +47,10 @@ class TTSPipeline:
         
         # 将本地回调传递给中文G2P
         self.g2p = ChineseG2P(en_callable=self.en_callback)
+        
+        # 初始化文本规范化器
+        self.zh_normalizer = ZhTextNormalizer()
+        self.en_normalizer = EnTextNormalizer()
         
         # 直接加载KModel
         logger.info(f"正在加载KModel (repo_id={repo_id})")
@@ -183,6 +185,93 @@ class TTSPipeline:
         
         return output.audio
 
+    def preprocess_text(self, text: str) -> str:
+        """预处理文本，根据内容分别进行中英文规范化
+        
+        Args:
+            text: 输入文本
+            
+        Returns:
+            规范化后的文本
+        """
+        logger.info(f"开始文本预处理: {text[:50]}{'...' if len(text) > 50 else ''}")
+        
+        segments = []
+        chunks = []
+        last_end = 0
+        
+        # 使用更健壮的方式分割文本
+        pattern = re.compile(
+            r'([\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+)|'  # 中文字符
+            r'([a-zA-Z]+(?:[\s\-\'"][a-zA-Z]+)*)|'  # 英文单词
+            r'(\d+(?:\.\d+)?)|'  # 数字
+            r'([\u2000-\u206F\u2E00-\u2E7F\'!"#$%&\(\)*+,\-.\/:;<=>?@\[\]^_`{|}~]+)'  # 标点符号
+        )
+        
+        for match in pattern.finditer(text):
+            # 处理未匹配文本
+            if match.start() > last_end:
+                unmatched = text[last_end:match.start()]
+                if unmatched.strip():
+                    chunks.append((None, unmatched))
+            
+            # 判断匹配类型
+            if match.group(1):  # 中文
+                chunks.append(('zh', match.group(1)))
+            elif match.group(2):  # 英文
+                chunks.append(('en', match.group(2)))
+            elif match.group(3):  # 数字
+                # 检查数字的上下文
+                prev_type = chunks[-1][0] if chunks else None
+                next_char = text[match.end():match.end()+1]
+                
+                # 如果数字后面跟着中文单位（年月日等）或前面是中文，按中文处理
+                if (next_char and '\u4e00' <= next_char <= '\u9fff') or prev_type == 'zh':
+                    chunks.append(('zh', match.group(3)))
+                else:
+                    chunks.append(('en', match.group(3)))
+            else:  # 标点符号
+                # 根据前后文判断标点符号归属
+                prev_type = chunks[-1][0] if chunks else None
+                chunks.append((prev_type or 'zh', match.group(4)))
+            
+            last_end = match.end()
+        
+        # 处理剩余文本
+        if last_end < len(text):
+            unmatched = text[last_end:]
+            if unmatched.strip():
+                chunks.append((None, unmatched))
+        
+        # 合并相邻的同类型块
+        merged_chunks = []
+        current_type = None
+        current_text = ""
+        
+        for chunk_type, chunk_text in chunks:
+            if chunk_type == current_type:
+                current_text += chunk_text
+            else:
+                if current_text:
+                    merged_chunks.append((current_type, current_text))
+                current_type = chunk_type
+                current_text = chunk_text
+        
+        if current_text:
+            merged_chunks.append((current_type, current_text))
+        
+        # 应用规范化处理
+        for chunk_type, chunk_text in merged_chunks:
+            if chunk_type == 'zh':
+                normalized = ''.join(self.zh_normalizer.normalize(chunk_text))
+            else:
+                normalized = self.en_normalizer.normalize(chunk_text)
+            segments.append(normalized)
+        
+        result = ''.join(segments)
+        logger.info(f"文本预处理完成: {result[:50]}{'...' if len(result) > 50 else ''}")
+        return result
+
     def process(
         self,
         text: str,
@@ -203,8 +292,8 @@ class TTSPipeline:
         Returns:
             生成的音频张量
         """
-        # 1. 预处理文本（预留处理扩展）
-        normalized_text = text
+        # 1. 预处理文本（分别应用中英文规范化）
+        normalized_text = self.preprocess_text(text)
         
         # 是否分割文本
         if segment_text:

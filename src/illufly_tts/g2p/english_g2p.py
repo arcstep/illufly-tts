@@ -162,11 +162,10 @@ class Lexicon:
             gold_file = "gb_gold.json" if british else "us_gold.json"
             silver_file = "gb_silver.json" if british else "us_silver.json"
             
-            # 与en.py相同的加载方法
-            with importlib.resources.open_text(data, gold_file) as r:
+            with importlib.resources.files(data).joinpath(gold_file).open('r') as r:
                 self.golds = Lexicon.grow_dictionary(json.load(r))
             
-            with importlib.resources.open_text(data, silver_file) as r:
+            with importlib.resources.files(data).joinpath(silver_file).open('r') as r:
                 self.silvers = Lexicon.grow_dictionary(json.load(r))
                 
             logger.info(f"成功从内置data目录加载词典: {gold_file} 和 {silver_file}")
