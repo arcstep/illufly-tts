@@ -7,9 +7,7 @@
 """
 
 from .base_g2p import BaseG2P
-from .mixed_g2p import MixedG2P
 from .chinese_g2p import ChineseG2P
-from .custom_zh_g2p import CustomZHG2P
-from .simple_english_g2p import SimpleEnglishG2P
+from .english_g2p import EnglishG2P
 
-__all__ = ['BaseG2P', 'MixedG2P', 'ChineseG2P', 'CustomZHG2P', 'SimpleEnglishG2P'] 
+__all__ = ['BaseG2P', 'ChineseG2P', 'EnglishG2P'] 

@@ -383,11 +383,10 @@ class TTSComponentTest:
                 # 记录步骤执行详情
                 steps_text = (
                     f"Pipeline处理过程详情:\n"
-                    f"1. 原始文本: {text}\n"
-                    f"2. 预处理文本: {pipeline.preprocess_text(text)}\n"
-                    f"3. 注音格式: {pipeline.text_to_phonemes(pipeline.preprocess_text(text))}\n"
-                    f"4. IPA格式: {pipeline.phonemes_to_ipa(pipeline.text_to_phonemes(pipeline.preprocess_text(text)))}\n"
-                    f"5. 总处理时间: {process_duration:.4f}秒\n"
+                    f"1. 处理文本: {text}\n"
+                    f"2. 注音格式: {pipeline.text_to_phonemes(text)}\n"
+                    f"3. IPA格式: {pipeline.phonemes_to_ipa(pipeline.text_to_phonemes(text))}\n"
+                    f"4. 总处理时间: {process_duration:.4f}秒\n"
                 )
                 self.save_text_file("pipeline_steps", steps_text)
                 
@@ -418,7 +417,7 @@ class TTSComponentTest:
                             )
                             
                             if k_phonemes is not None:
-                                our_phonemes = pipeline.text_to_phonemes(pipeline.preprocess_text(text))
+                                our_phonemes = pipeline.text_to_phonemes(text)
                                 comparison_text += f"\n音素对比:\n"
                                 comparison_text += f"官方: {k_phonemes}\n"
                                 comparison_text += f"自定义: {our_phonemes}\n"

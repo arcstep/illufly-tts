@@ -11,9 +11,8 @@ import logging
 from typing import Dict, List, Optional, Union, Tuple, Any, Generator
 import torch
 
-from .preprocessing.segmenter import LanguageSegmenter
-from .preprocessing.normalizer import TextNormalizer
 from .g2p.chinese_g2p import ChineseG2P
+from .g2p.english_g2p import EnglishG2P
 from kokoro.model import KModel  # 仅依赖KModel，不使用KPipeline
 
 logger = logging.getLogger(__name__)
@@ -25,12 +24,7 @@ class TTSPipeline:
         self,
         repo_id: str,
         voices_dir: str,
-        device: str = "cpu",
-        nltk_data_path: Optional[str] = None,
-        segmenter_class=LanguageSegmenter,
-        normalizer_class=TextNormalizer,
-        g2p_class=ChineseG2P,
-        **kwargs
+        device: str = "cpu"
     ):
         """初始化TTS流水线
         
@@ -38,7 +32,6 @@ class TTSPipeline:
             repo_id: 模型ID或路径
             voices_dir: 语音目录
             device: 设备名称
-            nltk_data_path: NLTK数据目录路径
             segmenter_class: 分割器类
             normalizer_class: 规范化器类
             g2p_class: G2P类
@@ -46,13 +39,16 @@ class TTSPipeline:
         self.repo_id = repo_id
         self.voices_dir = voices_dir
         self.device = device
-        self.nltk_data_path = nltk_data_path
         self.sample_rate = 24000  # 采样率
         
-        # 初始化组件
-        self.segmenter = segmenter_class()
-        self.normalizer = normalizer_class()
-        self.g2p = g2p_class()
+        # 初始化英文G2P
+        self.en_g2p = EnglishG2P()
+        
+        # 明确地创建回调函数引用
+        self.en_callback = self.en_g2p.text_to_ipa
+        
+        # 将本地回调传递给中文G2P
+        self.g2p = ChineseG2P(en_callable=self.en_callback)
         
         # 直接加载KModel
         logger.info(f"正在加载KModel (repo_id={repo_id})")
@@ -63,7 +59,7 @@ class TTSPipeline:
         
         # 日志记录模型加载成功
         logger.info("TTSPipeline初始化完成")
-    
+
     def load_voice(self, voice_id: str) -> torch.FloatTensor:
         """加载语音包
         
@@ -89,21 +85,7 @@ class TTSPipeline:
             return pack
         else:
             raise ValueError(f"找不到语音文件: {voice_path}")
-    
-    def preprocess_text(self, text: str) -> str:
-        """预处理文本
         
-        Args:
-            text: 输入文本
-            
-        Returns:
-            预处理后的文本
-        """
-        # 规范化文本
-        normalized_text = self.normalizer.normalize(text)
-        logger.info(f"文本规范化完成: {text[:50]}{'...' if len(text) > 50 else ''}")
-        return normalized_text
-    
     def segment_text(self, text: str, max_len: int = 400) -> List[str]:
         """分割文本为多个段落
         
@@ -221,8 +203,8 @@ class TTSPipeline:
         Returns:
             生成的音频张量
         """
-        # 1. 预处理文本
-        normalized_text = self.preprocess_text(text)
+        # 1. 预处理文本（预留处理扩展）
+        normalized_text = text
         
         # 是否分割文本
         if segment_text:
@@ -339,3 +321,40 @@ class TTSPipeline:
             results.append(audio)
         
         return results
+
+    def arpa_to_ipa(self, arpa_phonemes: str) -> str:
+        """将ARPAbet音素转换为IPA格式
+        
+        Args:
+            arpa_phonemes: ARPAbet格式的音素序列
+            
+        Returns:
+            IPA格式的音素序列
+        """
+        # ARPAbet到IPA的映射
+        arpa_to_ipa_map = {
+            'AA': 'ɑ', 'AE': 'æ', 'AH': 'ʌ', 'AO': 'ɔ', 'AW': 'aʊ',
+            'AY': 'aɪ', 'B': 'b', 'CH': 'tʃ', 'D': 'd', 'DH': 'ð',
+            'EH': 'ɛ', 'ER': 'ɝ', 'EY': 'eɪ', 'F': 'f', 'G': 'ɡ',
+            'HH': 'h', 'IH': 'ɪ', 'IY': 'i', 'JH': 'dʒ', 'K': 'k',
+            'L': 'l', 'M': 'm', 'N': 'n', 'NG': 'ŋ', 'OW': 'oʊ',
+            'OY': 'ɔɪ', 'P': 'p', 'R': 'ɹ', 'S': 's', 'SH': 'ʃ',
+            'T': 't', 'TH': 'θ', 'UH': 'ʊ', 'UW': 'u', 'V': 'v',
+            'W': 'w', 'Y': 'j', 'Z': 'z', 'ZH': 'ʒ',
+            # 小写版本同样映射
+            'aa': 'ɑ', 'ae': 'æ', 'ah': 'ʌ', 'ao': 'ɔ', 'aw': 'aʊ',
+            # ... 其余映射 ...
+        }
+        
+        # 处理ARPAbet音素
+        words = arpa_phonemes.split()
+        ipa_result = []
+        
+        for word in words:
+            if word in arpa_to_ipa_map:
+                ipa_result.append(arpa_to_ipa_map[word])
+            else:
+                # 保留原始标记
+                ipa_result.append(word)
+        
+        return ''.join(ipa_result)

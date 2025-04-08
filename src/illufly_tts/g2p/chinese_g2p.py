@@ -111,34 +111,10 @@ class ChineseG2P(BaseG2P):
 
     
     def text_to_phonemes(self, text: str) -> str:
-        """将文本转换为音素序列，直接使用ZHFrontend
-        
-        Args:
-            text: 输入文本
-            
-        Returns:
-            音素序列字符串
-        """
-        if not text.strip():
-            return ""
-        
-        # 数字转中文
-        text = cn2an.transform(text, 'an2cn')
-        
-        # 处理标点符号
-        text = self.map_punctuation(text)
-        
-        # 使用frontend处理
-        result, _ = self.frontend(text)
-        
-        return (result)
-    
-    def __call__(self, text, en_callable=None) -> Tuple[str, None]:
         """实现与Misaki的ZHG2P相同的调用接口
         
         Args:
             text: 输入文本
-            en_callable: 英文处理函数（可选）
             
         Returns:
             音素序列和tokens
@@ -150,22 +126,27 @@ class ChineseG2P(BaseG2P):
         text = cn2an.transform(text, 'an2cn')
         text = self.map_punctuation(text)
         
-        # 使用回调处理混合文本
-        en_callable = self.en_callable if en_callable is None else en_callable
+        # 添加显式警告，帮助调试
+        if self.en_callable is None:
+            logger.warning("Warning: en_callable is None, so English may be removed")
+        
         segments = []
         
+        # 使用与normalizer.py类似的英文处理模式
         for en, zh in re.findall(r'([A-Za-z \'-]*[A-Za-z][A-Za-z \'-]*)|([^A-Za-z]+)', text):
             en, zh = en.strip(), zh.strip()
             if zh:
                 # 使用frontend处理中文
                 result, _ = self.frontend(zh)
                 segments.append(result)
-            elif en_callable is None:
+            elif self.en_callable is None:
+                # 如果没有英文回调，使用未知符号
                 segments.append(self.unk)
             else:
-                segments.append(en_callable(en))
-            
-        return (' '.join(segments), None)
+                # 使用稳定的英文回调
+                segments.append(self.en_callable(en))
+        
+        return ' '.join(segments)
 
     def convert_to_IAP(self, phonemes: str) -> str:
         try:
@@ -250,3 +231,28 @@ class ChineseG2P(BaseG2P):
             语言代码
         """
         return "zh" 
+
+    def convert_to_IPA(self, phonemes: str) -> str:
+        """将注音符号转换为IPA格式（兼容官方实现）
+        
+        Args:
+            phonemes: 注音符号音素序列
+            
+        Returns:
+            IPA格式音素序列
+        """
+        # KPipeline风格：保留原始注音
+        # 仅在英文部分处理，中文注音部分保持原样
+        segments = []
+        
+        # 分割音素序列（按空格分割）
+        for segment in phonemes.split():
+            # 检查是否为英文IPA部分（以 'ˈ', 'ˌ', 'ʃ' 等IPA特殊符号开头的可能是英文）
+            if any(segment.startswith(c) for c in 'ˈˌtʃaɪʒʤθð'):
+                # 英文IPA部分保持原样
+                segments.append(segment)
+            else:
+                # 中文注音部分保持原样
+                segments.append(segment)
+        
+        return ' '.join(segments) 

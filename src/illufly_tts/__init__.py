@@ -7,9 +7,6 @@ illufly-tts: 高质量多语言TTS系统
 
 import logging
 from .pipeline import TTSPipeline
-from .preprocessing.normalizer import TextNormalizer
-from .preprocessing.segmenter import LanguageSegmenter
-from .vocoders.kokoro_adapter import KokoroAdapter, KokoroVoice
 from .utils.logging_config import configure_logging
 
 __version__ = "0.1.0"
