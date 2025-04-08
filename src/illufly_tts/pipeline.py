@@ -221,15 +221,22 @@ class TTSPipeline:
             elif match.group(2):  # 英文
                 chunks.append(('en', match.group(2)))
             elif match.group(3):  # 数字（可能包含温度单位）
-                # 检查数字的上下文和是否包含温度单位
                 number_text = match.group(3)
                 has_temp_unit = any(unit in number_text for unit in ['°C', '℃', '度', '摄氏度', '气温'])
                 
                 prev_type = chunks[-1][0] if chunks else None
-                next_char = text[match.end():match.end()+1]
+                prev_char = text[match.start()-1:match.start()] if match.start() > 0 else ""
+                next_char = text[match.end():match.end()+1] if match.end() < len(text) else ""
                 
-                # 如果数字包含温度单位，或者前后有中文，按中文处理
-                if has_temp_unit or (next_char and '\u4e00' <= next_char <= '\u9fff') or prev_type == 'zh':
+                # 判断数字前面是否有货币符号
+                is_after_currency = prev_char in ['￥', '¥', '$', '€', '£', '₽', '₹']
+                
+                # 检查上下文来判断数字应该使用哪种语言处理
+                if (has_temp_unit or 
+                    (next_char and '\u4e00' <= next_char <= '\u9fff') or 
+                    prev_type == 'zh' or
+                    is_after_currency and prev_type == 'zh' or
+                    (prev_char and '\u4e00' <= prev_char <= '\u9fff')):
                     chunks.append(('zh', number_text))
                 else:
                     chunks.append(('en', number_text))
@@ -268,10 +275,69 @@ class TTSPipeline:
             if chunk_type == 'zh':
                 normalized = ''.join(self.zh_normalizer.normalize(chunk_text))
             else:
+                # 确保英文片段以空格开始和结束
                 normalized = self.en_normalizer.normalize(chunk_text)
+                # 确保"for"和"ten"之间有空格
+                normalized = re.sub(r'(\w+)(\d+|ten|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)', r'\1 \2', normalized)
+            
+            # 检查是否需要添加空格
+            if segments and chunk_type == 'en' and not normalized.startswith(' ') and not segments[-1].endswith(' '):
+                segments.append(' ')
+            
             segments.append(normalized)
         
         result = ''.join(segments)
+        
+        # 额外处理中文环境中的货币金额
+        zh_currency_pattern = re.compile(r'([\u4e00-\u9fff])?([￥¥$€£₽₹])?\s*(\d+(?:\.\d+)?)([\u4e00-\u9fff])?')
+        def normalize_zh_currency(match):
+            prev_cn = match.group(1)
+            currency = match.group(2)
+            amount = match.group(3)
+            next_cn = match.group(4)
+            
+            # 如果前后有中文字符或货币符号是中文，则使用中文规范化
+            if (prev_cn or next_cn or currency in ['￥', '¥']) and amount:
+                # 对金额应用中文规范化
+                amount_zh = self.zh_normalizer.normalize(amount)
+                if currency:
+                    return f"{prev_cn or ''}{currency}{amount_zh}{next_cn or ''}"
+                return f"{prev_cn or ''}{amount_zh}{next_cn or ''}"
+            return match.group(0)
+        
+        result = zh_currency_pattern.sub(normalize_zh_currency, result)
+        
+        # 手动处理英文序数词日期
+        month_pattern = re.compile(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(st|nd|rd|th)', re.IGNORECASE)
+        
+        def replace_ordinal_date(match):
+            month = match.group(1)
+            day = match.group(2)
+            suffix = match.group(3)
+            
+            day_num = int(day)
+            if day_num == 1:
+                day_text = "first" 
+            elif day_num == 2:
+                day_text = "second"
+            elif day_num == 3:
+                day_text = "third" 
+            elif day_num == 21:
+                day_text = "twenty first"
+            elif day_num == 22:
+                day_text = "twenty second"
+            elif day_num == 23:
+                day_text = "twenty third"
+            elif day_num == 31:
+                day_text = "thirty first"
+            else:
+                from .normalization.en.chronology import verbalize_ordinal
+                day_text = verbalize_ordinal(day_num)
+            
+            return f"{month} {day_text}"
+        
+        result = month_pattern.sub(replace_ordinal_date, result)
+        
         logger.info(f"文本预处理完成: {result[:50]}{'...' if len(result) > 50 else ''}")
         return result
 

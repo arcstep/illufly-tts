@@ -102,30 +102,8 @@ def replace_time(match) -> str:
     hour_text = verbalize_number(str(hour_num))
     minute_text = verbalize_number(minute)
     
-    # 处理整点
-    if minute == '00':
-        time_text = f"{hour_text} o'clock"
-    # 处理半点
-    elif minute == '30':
-        time_text = f"half past {hour_text}"
-    # 处理一刻钟
-    elif minute == '15':
-        time_text = f"quarter past {hour_text}"
-    # 处理三刻钟
-    elif minute == '45':
-        next_hour = (hour_num + 1) % 24
-        next_hour_text = verbalize_number(str(next_hour))
-        time_text = f"quarter to {next_hour_text}"
-    # 处理其他分钟数
-    else:
-        if int(minute) < 30:
-            time_text = f"{minute_text} past {hour_text}"
-        else:
-            next_hour = (hour_num + 1) % 24
-            next_hour_text = verbalize_number(str(next_hour))
-            remaining_minutes = 60 - int(minute)
-            remaining_minutes_text = verbalize_number(str(remaining_minutes))
-            time_text = f"{remaining_minutes_text} to {next_hour_text}"
+    # 统一使用 "hour:minute" 格式
+    time_text = f"{hour_text} {minute_text}"
     
     # 添加上午/下午标记
     if ampm:
@@ -190,7 +168,23 @@ def replace_date(match) -> str:
             year_text = verbalize_number(year)
     
     # 组合日期 (加上ordinal后缀)
-    day_ordinal = verbalize_ordinal(day_num)
+    if day_num == 1:
+        day_ordinal = "first"
+    elif day_num == 2:
+        day_ordinal = "second"
+    elif day_num == 3:
+        day_ordinal = "third"
+    elif day_num == 21:
+        day_ordinal = "twenty first"
+    elif day_num == 22:
+        day_ordinal = "twenty second" 
+    elif day_num == 23:
+        day_ordinal = "twenty third"
+    elif day_num == 31:
+        day_ordinal = "thirty first"
+    else:
+        day_ordinal = verbalize_ordinal(day_num)
+    
     return f"{month_name} {day_ordinal}, {year_text}"
 
 

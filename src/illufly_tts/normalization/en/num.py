@@ -97,11 +97,21 @@ def replace_integer(match) -> str:
     Returns:
         处理后的文本
     """
-    sign, number = match.groups()
+    groups = match.groups()
     
-    if sign:
-        return 'negative ' + verbalize_number(number)
-    return verbalize_number(number)
+    # 根据匹配组的数量不同，处理方式有所不同
+    if len(groups) == 1:
+        # 只有数字，没有符号
+        return verbalize_number(groups[0])
+    elif len(groups) >= 2:
+        # 有符号和数字
+        sign, number = groups[0], groups[1]
+        if sign and sign == '-':
+            return 'negative ' + verbalize_number(number)
+        return verbalize_number(number)
+    else:
+        # 直接返回原始匹配结果
+        return verbalize_number(match.group(0))
 
 
 def replace_decimal(match) -> str:

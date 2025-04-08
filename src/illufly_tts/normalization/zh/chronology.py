@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import re
+from typing import Dict, List
 
 from .num import DIGITS
 from .num import num2str
@@ -125,35 +126,13 @@ def replace_year_range(match) -> str:
     Returns:
         处理后的文本
     """
-    start_year, end_year = match.groups()
+    year1, year2 = match.groups()
     
-    # 处理起始年份
-    if start_year.startswith('19'):
-        start_text = f"一九{verbalize_digit(start_year[2:])}年"
-    elif start_year.startswith('20'):
-        if start_year[2:] == '00':
-            start_text = "二零零零年"
-        elif start_year[2] == '0':
-            start_text = f"二零零{verbalize_digit(start_year[3])}年"
-        else:
-            start_text = f"二零{verbalize_digit(start_year[2:])}年"
-    else:
-        start_text = f"{verbalize_digit(start_year)}年"
+    # 将两个年份转换为中文
+    year1_zh = digits_to_chinese(year1)
+    year2_zh = digits_to_chinese(year2)
     
-    # 处理结束年份
-    if end_year.startswith('19'):
-        end_text = f"一九{verbalize_digit(end_year[2:])}年"
-    elif end_year.startswith('20'):
-        if end_year[2:] == '00':
-            end_text = "二零零零年"
-        elif end_year[2] == '0':
-            end_text = f"二零零{verbalize_digit(end_year[3])}年"
-        else:
-            end_text = f"二零{verbalize_digit(end_year[2:])}年"
-    else:
-        end_text = f"{verbalize_digit(end_year)}年"
-    
-    return f"{start_text}至{end_text}"
+    return f"{year1_zh}年至{year2_zh}年"
 
 
 def replace_date2(match) -> str:
@@ -174,3 +153,38 @@ def replace_date2(match) -> str:
     if day:
         result += f"{verbalize_cardinal(day)}日"
     return result
+
+
+# 定义日期时间相关的常量
+CHINESE_DIGITS = {
+    '0': '零', '1': '一', '2': '二', '3': '三', '4': '四',
+    '5': '五', '6': '六', '7': '七', '8': '八', '9': '九'
+}
+
+def verbalize_digit(digit_str: str) -> str:
+    """将数字字符串转换为中文读法
+    
+    Args:
+        digit_str: 数字字符串
+        
+    Returns:
+        中文读法
+    """
+    result = []
+    for digit in digit_str:
+        if digit in CHINESE_DIGITS:
+            result.append(CHINESE_DIGITS[digit])
+        else:
+            result.append(digit)
+    return ''.join(result)
+
+def digits_to_chinese(number: str) -> str:
+    """将阿拉伯数字转换为中文表示
+    
+    Args:
+        number: 阿拉伯数字字符串
+        
+    Returns:
+        中文表示
+    """
+    return verbalize_digit(number)

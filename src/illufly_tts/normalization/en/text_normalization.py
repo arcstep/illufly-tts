@@ -14,7 +14,9 @@ from .num import RE_DECIMAL_NUM, RE_INTEGER, RE_NUMBER, RE_PERCENTAGE, RE_RANGE,
 from .num import replace_number, replace_decimal, replace_integer, replace_percentage, replace_range, replace_fraction
 from .phone import RE_PHONE, RE_MOBILE, replace_phone, replace_mobile
 from .currency import RE_CURRENCY, replace_currency
-from .constants import SPECIAL_SYMBOLS
+from .constants import SPECIAL_SYMBOLS, DIGIT_MAP
+from .num import verbalize_number
+from .chronology import verbalize_ordinal
 
 
 class EnTextNormalizer:
@@ -43,6 +45,9 @@ class EnTextNormalizer:
         
         # 存储被保护的内容
         self.protected_content = {}
+        
+        # 添加对带序数词后缀日期的正则表达式
+        self.RE_ORDINAL_DATE = re.compile(r'([A-Za-z]+)\s+(\d{1,2})(st|nd|rd|th),?\s+(\d{4})', re.IGNORECASE)
     
     def _split(self, text: str) -> List[str]:
         """将长文本分割为句子
@@ -74,35 +79,38 @@ class EnTextNormalizer:
         # 过滤特殊字符
         sentence = re.sub(r'[<=>{}()\[\]#&@^_|…\\]', '', sentence)
         
+        # 处理连续多个空格
+        sentence = re.sub(r'\s+', ' ', sentence).strip()
+        
         return sentence
     
     def _protect_special_formats(self, text: str) -> str:
-        """保护特殊格式的文本，避免被规范化处理
+        """保护特殊格式文本，避免被规范化
         
         Args:
-            text: 原始文本
+            text: 输入文本
             
         Returns:
-            处理后的文本，特殊格式被替换为占位符
+            处理后的文本
         """
         result = text
         
-        # 定义正则表达式
+        # 定义正则表达式模式
         email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+        url_pattern = r'(https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|www\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\.[^\s]{2,}|https?:\/\/(?:www\.|(?!www))[a-zA-Z0-9]+\.[^\s]{2,}|www\.[a-zA-Z0-9]+\.[^\s]{2,})'
         
         # 保护邮箱地址
         for match in re.finditer(email_pattern, result):
-            placeholder = f'<PROTECTED_{len(self.protected_content)}>'
+            placeholder = f'<PROTECTED_EMAIL_{len(self.protected_content)}>'
             self.protected_content[placeholder] = match.group()
             result = result.replace(match.group(), placeholder)
-            
+        
         # 保护URL
         for match in re.finditer(url_pattern, result):
-            placeholder = f'<PROTECTED_{len(self.protected_content)}>'
+            placeholder = f'<PROTECTED_URL_{len(self.protected_content)}>'
             self.protected_content[placeholder] = match.group()
             result = result.replace(match.group(), placeholder)
-            
+        
         return result
     
     def _restore_special_formats(self, text: str) -> str:
@@ -127,6 +135,63 @@ class EnTextNormalizer:
             
         return result
     
+    def _handle_ordinal_dates(self, text: str) -> str:
+        """处理带有序数词后缀的日期，如 June 1st, 2023
+        
+        Args:
+            text: 输入文本
+            
+        Returns:
+            处理后的文本
+        """
+        def replace_ordinal_date(match):
+            month = match.group(1)
+            day = match.group(2)
+            suffix = match.group(3)
+            year = match.group(4)
+            
+            # 转换日期
+            day_num = int(day)
+            
+            # 处理序数词
+            if day_num == 1:
+                day_ordinal = "first"
+            elif day_num == 2:
+                day_ordinal = "second"
+            elif day_num == 3:
+                day_ordinal = "third"
+            elif day_num == 21:
+                day_ordinal = "twenty first"
+            elif day_num == 22:
+                day_ordinal = "twenty second" 
+            elif day_num == 23:
+                day_ordinal = "twenty third"
+            elif day_num == 31:
+                day_ordinal = "thirty first"
+            else:
+                day_ordinal = verbalize_ordinal(day_num)
+            
+            # 处理年份
+            if year.startswith('19'):
+                # 1900-1999年按"nineteen XX"读
+                year_text = f"nineteen {verbalize_number(year[2:])}"
+            elif year.startswith('20'):
+                # 2000-2099年支持两种读法
+                if year[2:] == '00':
+                    year_text = "two thousand"
+                elif year[2] == '0':
+                    year_text = f"two thousand {DIGIT_MAP[year[3]]}".strip()
+                else:
+                    # 使用"twenty"读法
+                    year_text = f"twenty {verbalize_number(year[2:])}"
+            else:
+                # 其他年份按完整数字读
+                year_text = verbalize_number(year)
+            
+            return f"{month} {day_ordinal}, {year_text}"
+        
+        return self.RE_ORDINAL_DATE.sub(replace_ordinal_date, text)
+    
     def normalize_sentence(self, sentence: str) -> str:
         """对单个句子进行规范化处理
         
@@ -138,6 +203,9 @@ class EnTextNormalizer:
         """
         # 保护特殊格式
         sentence = self._protect_special_formats(sentence)
+        
+        # 处理带序数词后缀的日期
+        sentence = self._handle_ordinal_dates(sentence)
         
         # 数字相关NSW规范化
         sentence = RE_YEAR_RANGE.sub(replace_year_range, sentence)  # 先处理年份范围
