@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP
 import torch
 import torchaudio
 
-from ..service import TTSServiceManager
+from ..core.service import TTSServiceManager
 
 logger = logging.getLogger(__name__)
 

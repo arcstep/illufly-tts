@@ -1,205 +1,101 @@
-# Illufly TTS
+# Illufly TTS - 模块化语音合成服务
 
-高质量多语言文本转语音(TTS)系统
+高质量的模块化中文语音合成系统，支持多种部署方式。
 
-## 特性
+## 特点
 
-- 支持中文、英文和中英混合文本
-- 基于Kokoro模型的高质量语音合成
-- 模块化设计，易于扩展
-- 支持多种语音和音色
-- 提供完整的命令行工具
+- **模块化设计**：可以按需安装客户端、服务端或完整包
+- **低资源需求**：客户端几乎不需要额外依赖
+- **易于集成**：可以直接复制API端点到其他应用
+- **多种部署**：支持命令行、MCP协议和REST API接口
 
-## 架构
+## 安装方式
 
-系统由以下模块组成:
+### 1. 完整安装
 
-1. **文本预处理模块**
-   - 语言分段器: 检测和分离混合文本中的不同语言
-   - 文本规范化器: 处理数字、标点符号等
-
-2. **G2P模块**
-   - 英文G2P: 将英文文本转换为音素
-   - 中文G2P: 将中文文本转换为拼音和音素
-   - 混合G2P: 处理混合语言文本
-
-3. **音频生成模块**
-   - Kokoro适配器: 连接自定义处理与Kokoro模型
-   - 语音资源管理: 管理多种语音和音色
-
-4. **集成流水线**
-   - 标准流水线: 基本的TTS流程
-   - 混合语言流水线: 专为混合语言文本优化
-
-## 自定义词典
-
-系统支持通过自定义词典来控制特定词汇的发音，这对于专有名词、行业术语或多音字特别有用。
-
-### 词典位置
-
-词典文件位于 `src/illufly_tts/resources/dictionaries/` 目录：
-- `chinese_dict.txt` - 中文词汇的音素映射
-- `english_dict.txt` - 英文词汇的音素映射
-
-### 词典格式
-
-词典采用简单的文本格式，每行一个词条：
-
-```
-# 中文格式：词汇 音素1 音素2 ...
-人工智能 r en2 g ong1 zh iii4 n eng2
-
-# 英文格式：词汇 音素1 音素2 ...
-AI ey ay
-```
-
-### 扩展词典
-
-您可以通过以下方式扩展词典：
-
-1. 直接编辑现有词典文件
-2. 在代码中指定自定义词典路径：
-
-```python
-from illufly_tts.g2p.mixed_g2p import MixedG2P
-
-# 使用自定义词典
-g2p = MixedG2P(dictionary_path="path/to/your/custom_dict.txt")
-```
-
-### 优先级
-
-当词汇在词典中找到匹配项时，系统会优先使用词典中的发音，而不使用自动推导的发音。这允许您为任何生成不正确发音的词汇提供更精确的控制。
-
-## 安装
-
-### 环境要求
-
-- Python 3.8+
-- PyTorch 1.10+
-- CUDA (推荐，但非必须)
-
-### 安装步骤
+包含所有组件，适合单机部署或完整服务：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/illufly/illufly-tts.git
-cd illufly-tts
-
-# 安装依赖
-pip install -e .
-
-# 开发环境安装
-pip install -e ".[dev]"
+pip install "illufly-tts[full]"
 ```
 
-## 使用方法
+### 2. 仅客户端
 
-### 命令行工具
+轻量级安装，只包含客户端组件：
 
 ```bash
-# 单句合成
-illufly-tts --text "今天天气真好！" --model-path /path/to/model --voices-dir /path/to/voices --voice-id z001 --output output.wav
-
-# 从文件读取
-illufly-tts --file input.txt --model-path /path/to/model --voices-dir /path/to/voices --output output.wav
-
-# 列出可用语音
-illufly-tts --model-path /path/to/model --voices-dir /path/to/voices --list-voices
-
-# 使用混合语言模式
-illufly-tts --text "你好，Hello World！" --model-path /path/to/model --voices-dir /path/to/voices --mixed-language
+pip install "illufly-tts[client]"
 ```
 
-### 编程接口
+### 3. 仅服务端
+
+包含TTS核心服务：
+
+```bash
+pip install "illufly-tts[server]"
+```
+
+## 使用方式
+
+### 完整服务（单机模式）
+
+```bash
+# 启动完整服务（包含API和TTS引擎）
+python -m illufly_tts serve --voices-dir=./voices --device=cpu
+```
+
+### 拆分部署
+
+```bash
+# 在服务器上启动MCP服务
+python -m illufly_tts server --voices-dir=./voices --device=cuda --transport=sse --port=31572
+
+# 在客户端启动API服务
+python -m illufly_tts api --server-host=tts-server-ip --server-port=31572
+```
+
+### 命令行客户端
+
+```bash
+# 通过命令行使用
+python -m illufly_tts client speak --process-command="/usr/bin/python" --process-args="-m,illufly_tts,server" "你好世界"
+
+# 获取可用语音
+python -m illufly_tts client voices
+```
+
+### 集成到其他应用
 
 ```python
-from illufly_tts import MixedLanguagePipeline
+from fastapi import FastAPI
+from illufly_tts.api.endpoints import mount_tts_service
 
-# 创建流水线
-tts = MixedLanguagePipeline(
-    model_path="/path/to/model",
-    voices_dir="/path/to/voices"
-)
+app = FastAPI()
 
-# 生成语音
-audio = tts.text_to_speech(
-    text="今天天气真好！Hello World!",
-    voice_id="z001",
-    output_path="output.wav"
+# 添加自定义认证逻辑
+async def get_current_user():
+    # 实现你的认证逻辑
+    return {"user_id": "my_user"}
+
+# 挂载TTS服务
+mount_tts_service(
+    app=app,
+    require_user=get_current_user,
+    host="tts-server-host",  # 或使用子进程方式
+    port=31572,
+    prefix="/api/tts"
 )
 ```
 
-## 测试
+## 直接复制集成
 
-### 单元测试
+如果你希望完全避免依赖，可以直接复制以下关键文件：
 
-```bash
-# 运行单元测试
-pytest
+1. `src/illufly_tts/client/mcp_client.py` - MCP客户端
+2. `src/illufly_tts/api/endpoints.py` - FastAPI端点
 
-# 运行覆盖率测试
-pytest --cov=illufly_tts
-```
+然后按照上面的集成示例整合到你的应用中。
 
-### 集成测试
+## 更多信息
 
-我们提供了一系列集成测试脚本，用于分步验证TTS系统的各个组件功能：
-
-1. **分步测试** - 逐步验证各模块效果:
-
-```bash
-# 运行所有测试
-python tests/integration/test_processing_steps.py -m /path/to/model -v /path/to/voices
-
-# 测试特定阶段
-python tests/integration/test_processing_steps.py --stage segmenter -t "你好，测试文本。Hello, test text."
-python tests/integration/test_processing_steps.py --stage normalizer -t "数字123转换测试"
-python tests/integration/test_processing_steps.py --stage g2p -t "G2P测试文本"
-python tests/integration/test_processing_steps.py --stage vocoder -m /path/to/model -v /path/to/voices
-python tests/integration/test_processing_steps.py --stage pipeline -m /path/to/model -v /path/to/voices
-
-# 详细日志
-python tests/integration/test_processing_steps.py -m /path/to/model -v /path/to/voices --verbose
-```
-
-2. **对比测试** - 比较官方与自定义实现:
-
-```bash
-# 运行所有对比测试
-python tests/integration/test_comparison.py -m /path/to/model -v /path/to/voices
-
-# 只比较文本规范化
-python tests/integration/test_comparison.py --mode normalization -t "规范化对比测试123"
-
-# 只比较流水线
-python tests/integration/test_comparison.py --mode pipeline -m /path/to/model -v /path/to/voices
-```
-
-3. **独立实现测试** - 测试完全独立的实现:
-
-```bash
-# 基本测试
-python tests/integration/test_independent_pipeline.py -m /path/to/model -v /path/to/voices
-
-# 分段处理
-python tests/integration/test_independent_pipeline.py -m /path/to/model -v /path/to/voices --segmented
-
-# 生成后播放
-python tests/integration/test_independent_pipeline.py -m /path/to/model -v /path/to/voices --play
-
-# 指定语音ID和语速
-python tests/integration/test_independent_pipeline.py -m /path/to/model -v /path/to/voices --voice-id z001 --speed 1.2
-```
-
-所有测试脚本都会生成详细的日志和结果文件，方便排查问题和优化实现。
-
-## 许可证
-
-MIT
-
-## 致谢
-
-- [Kokoro TTS](https://github.com/hexgrad/kokoro) - 基础语音合成模型
-- [g2p_en](https://github.com/Kyubyong/g2p) - 英文G2P转换
-- [pypinyin](https://github.com/mozillazg/python-pinyin) - 中文拼音转换
+详细文档请参阅项目Wiki或API文档。

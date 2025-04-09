@@ -6,10 +6,11 @@ illufly-tts: 高质量多语言TTS系统
 """
 
 import logging
-from .pipeline import TTSPipeline
+from .core import TTSPipeline, TTSServiceManager
 from .utils.logging_config import configure_logging
+from .api import mount_tts_service
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # 设置基本日志配置
 logging.basicConfig(
@@ -19,4 +20,5 @@ logging.basicConfig(
 
 __all__ = [
     'TTSPipeline', 
+    'mount_tts_service',
 ]

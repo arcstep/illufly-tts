@@ -4,8 +4,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "illufly-tts"
-version = "0.1.0"
-description = "Text-to-Speech module for Illufly"
+version = "0.2.0"
+description = "Text-to-Speech module for Illufly AI"
 authors = ["arcstep <43801@qq.com>"]
 readme = "README.md"
 packages = [
@@ -14,32 +14,53 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
-fastapi = ">=0.68.0"
-uvicorn = ">=0.15.0"
-python-multipart = ">=0.0.5"
+click = ">=8.0.0"
 pydantic = ">=1.8.2"
 python-dotenv = ">=0.19.0"
 loguru = ">=0.5.3"
-kokoro = ">=0.8.1"
-misaki = {version = ">=0.8.1", extras = ["zh"], python = ">=3.11,<3.13"}
-ordered-set = ">=4.1.0"
-pypinyin = {version = ">=0.54.0", python = ">=3.11,<4"}
-soundfile = ">=0.12.1"
-numpy = ">=1.22.0,<2.0.0"
-torch = "==2.2.2"
-aiofiles = ">=0.8.0"
-click = ">=8.0.0"
-mcp = ">=1.6.0,<2.0.0"
-anyio = ">=3.6.0"
-transformers = ">=4.30.0,<4.31.0"
-phonemizer = ">=3.2.0"
+
+# 客户端依赖 - 轻量级
+fastapi = {version = ">=0.68.0", optional = true}
+uvicorn = {version = ">=0.15.0", optional = true}
+python-multipart = {version = ">=0.0.5", optional = true}
+aiofiles = {version = ">=0.8.0", optional = true}
+mcp = {version = ">=1.6.0,<2.0.0", optional = true}
+anyio = {version = ">=3.6.0", optional = true}
+
+# 服务端依赖 - 重量级
+torch = {version = "==2.2.2", optional = true}
+torchaudio = {version = "2.2.2", optional = true}
+kokoro = {version = ">=0.8.1", optional = true}
+misaki = {version = ">=0.8.1", extras = ["zh"], python = ">=3.11,<3.13", optional = true}
+ordered-set = {version = ">=4.1.0", optional = true}
+pypinyin = {version = ">=0.54.0", python = ">=3.11,<4", optional = true}
+soundfile = {version = ">=0.12.1", optional = true}
+numpy = {version = ">=1.22.0,<2.0.0", optional = true}
+transformers = {version = ">=4.30.0,<4.31.0", optional = true}
 # 英文G2P核心依赖
-g2p-en = ">=2.1.0"  # 英文音素转换库
-langid = ">=1.1.6"  # 语言识别库
+g2p-en = {version = ">=2.1.0", optional = true}  # 英文音素转换库
+langid = {version = ">=1.1.6", optional = true}  # 语言识别库
+jieba = {version = "^0.42.1", optional = true}
 # 可选依赖
 nltk = {version = ">=3.8.1", optional = true}  # 仅用于高级特性
-jieba = "^0.42.1"
-torchaudio = "2.2.2"
+phonemizer = {version = "^3.3.0", optional = true}
+
+[tool.poetry.extras]
+# 完整安装
+full = [
+    "fastapi", "uvicorn", "python-multipart", "aiofiles", "mcp", "anyio",
+    "torch", "torchaudio", "kokoro", "misaki", "ordered-set", "pypinyin",
+    "soundfile", "numpy", "transformers", "g2p-en", "langid", "jieba", "phonemizer"
+]
+# 客户端安装 - 仅API和客户端
+client = [
+    "fastapi", "uvicorn", "python-multipart", "aiofiles", "mcp", "anyio"
+]
+# 服务端安装 - 仅核心服务
+server = [
+    "torch", "torchaudio", "kokoro", "misaki", "ordered-set", "pypinyin", "phonemizer",
+    "soundfile", "numpy", "transformers", "g2p-en", "langid", "jieba", "mcp"
+]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0.0"
@@ -48,7 +69,12 @@ isort = "^5.12.0"
 pytest-asyncio = "0.21.1"
 
 [tool.poetry.scripts]
+# 主入口点
 tts = "illufly_tts.__main__:main"
+# 子模块入口点
+tts-server = "illufly_tts.server.__main__:main"
+tts-api = "illufly_tts.api.__main__:main"
+tts-client = "illufly_tts.client.__main__:cli"
 
 [[tool.poetry.source]]
 name = "aliyun"

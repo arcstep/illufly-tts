@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 """
-TTS服务的FastAPI应用入口
+TTS服务的主入口点 - 支持多种运行模式
 """
 import sys
 import logging
 import click
+from typing import Optional
 from pathlib import Path
 
 # 配置日志
@@ -14,7 +15,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("illufly_tts")
 
-@click.command()
+@click.group()
+def cli():
+    """Illufly TTS 命令行工具 - 支持多种运行模式
+    
+    用法示例:
+      完整服务:    python -m illufly_tts serve
+      仅服务端:    python -m illufly_tts server
+      API服务:     python -m illufly_tts api
+      客户端:      python -m illufly_tts client
+    """
+    pass
+
+@cli.command()
 @click.option("--host", default="0.0.0.0", help="服务监听地址")
 @click.option("--port", default=8000, help="服务监听端口")
 @click.option("--repo-id", default="hexgrad/Kokoro-82M-v1.1-zh", help="模型仓库ID")
@@ -24,8 +37,8 @@ logger = logging.getLogger("illufly_tts")
 @click.option("--max-wait-time", default=0.2, help="最大等待时间")
 @click.option("--chunk-size", default=200, help="文本分块大小")
 @click.option("--output-dir", default=None, help="音频输出目录")
-def main(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, chunk_size, output_dir):
-    """启动TTS REST服务"""
+def serve(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, chunk_size, output_dir):
+    """启动完整的TTS服务 (API + MCP子进程)"""
     import uvicorn
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
@@ -65,7 +78,7 @@ def main(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, chu
     # 准备MCP子进程启动命令
     process_command = sys.executable
     process_args = [
-        "-m", "illufly_tts.api.mcp_server",  # 使用模块路径
+        "-m", "illufly_tts.server",  # 使用新的服务端模块
         "--repo-id", repo_id,
         "--voices-dir", voices_dir,
         f"--batch-size={batch_size}",
@@ -81,12 +94,13 @@ def main(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, chu
         process_args.append(f"--output-dir={output_dir}")
     
     # 挂载TTS服务到FastAPI应用
-    from .api.endpoints import mount_tts_service_stdio
+    from .api.endpoints import mount_tts_service
     
     logger.info(f"启动TTS服务 - MCP子进程: {process_command} {' '.join(process_args)}")
-    mount_tts_service_stdio(
+    mount_tts_service(
         app=app,
         require_user=get_current_user,
+        use_stdio=True,
         process_command=process_command,
         process_args=process_args,
         prefix="/api"
@@ -95,6 +109,34 @@ def main(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, chu
     # 启动uvicorn服务
     logger.info(f"启动FastAPI服务 - 监听: {host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+@cli.command()
+def server():
+    """启动仅TTS服务器组件"""
+    from .server.__main__ import main as server_main
+    sys.argv[0] = "illufly_tts_server"
+    server_main()
+
+@cli.command()
+def api():
+    """启动仅API服务组件"""
+    from .api.__main__ import main as api_main
+    sys.argv[0] = "illufly_tts_api"
+    api_main()
+
+@cli.command()
+def client():
+    """启动客户端命令行工具"""
+    from .client.__main__ import cli as client_cli
+    sys.argv[0] = "illufly_tts_client"
+    client_cli(obj={})
+
+# 默认没有子命令时，使用完整服务
+def main():
+    if len(sys.argv) == 1:
+        # 如果没有参数，默认使用serve模式
+        sys.argv.append("serve")
+    cli()
 
 if __name__ == "__main__":
     main()

@@ -1,12 +1,10 @@
 """
-基于MCP规范的文本转语音客户端
+轻量级基于MCP规范的文本转语音客户端
 """
 import asyncio
 import json
 import logging
 import os
-import sys
-from pathlib import Path
 from typing import Dict, List, Any, Optional, Union
 
 from mcp import ClientSession, StdioServerParameters 
@@ -22,7 +20,7 @@ if DEBUG:
 
 
 class TTSMcpClient:
-    """基于MCP的文本转语音客户端"""
+    """轻量级基于MCP的文本转语音客户端"""
     
     def __init__(
         self,
@@ -193,29 +191,6 @@ class TTSMcpClient:
             
         return await self._call_tool_safe("batch_text_to_speech", params)
     
-    async def save_speech_to_file(self, text: str, output_path: str, voice: Optional[str] = None) -> Dict[str, Any]:
-        """将文本转换为语音并保存到文件
-        
-        Args:
-            text: 要转换的文本
-            output_path: 输出文件路径
-            voice: 语音ID，默认使用服务器配置的语音
-            
-        Returns:
-            处理结果
-            
-        Raises:
-            ValueError: 如果转换或保存失败
-        """
-        params = {
-            "text": text,
-            "output_path": output_path
-        }
-        if voice:
-            params["voice"] = voice
-            
-        return await self._call_tool_safe("save_speech_to_file", params)
-    
     async def get_available_voices(self) -> List[Dict[str, Any]]:
         """获取可用的语音列表
         
@@ -293,10 +268,6 @@ class SyncTTSMcpClient:
     def batch_text_to_speech(self, texts: List[str], voice: Optional[str] = None) -> List[Dict[str, Any]]:
         """批量将文本转换为语音（同步版本）"""
         return self._run_async(self._client.batch_text_to_speech(texts, voice))
-    
-    def save_speech_to_file(self, text: str, output_path: str, voice: Optional[str] = None) -> Dict[str, Any]:
-        """将文本转换为语音并保存到文件（同步版本）"""
-        return self._run_async(self._client.save_speech_to_file(text, output_path, voice))
     
     def get_available_voices(self) -> List[Dict[str, Any]]:
         """获取可用的语音列表（同步版本）"""
