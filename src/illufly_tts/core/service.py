@@ -224,7 +224,18 @@ class TTSServiceManager:
             logger.warning("批处理循环已在运行")
 
     async def _batch_processing_loop(self):
-        """批处理循环"""
+        """批处理循环 - 改进版，处理语音加载和用户分组"""
+        # 预先加载所有常用语音
+        try:
+            common_voices = ["zf_001"]  # 添加您的常用语音ID列表
+            for voice_id in common_voices:
+                logger.info(f"预加载语音: {voice_id}")
+                await asyncio.to_thread(self.pipeline.load_voice, voice_id)
+                logger.info(f"语音已预加载: {voice_id}")
+        except Exception as e:
+            logger.error(f"预加载语音失败: {e}", exc_info=True)
+        
+        # 主处理循环
         while True:
             # 收集待处理的任务
             pending_tasks = [task for task in self.tasks.values() 
@@ -234,25 +245,43 @@ class TTSServiceManager:
                 await asyncio.sleep(0.1)
                 continue
             
-            # 等待足够的任务或超过最大等待时间
-            if len(pending_tasks) < self.batch_size:
-                start_time = time.time()
-                while (len(pending_tasks) < self.batch_size and 
-                       time.time() - start_time < self.max_wait_time):
-                    await asyncio.sleep(0.05)
-                    # 更新待处理任务列表
-                    pending_tasks = [task for task in self.tasks.values() 
-                                    if task.status == TaskStatus.PENDING]
-                    if len(pending_tasks) >= self.batch_size:
-                        break
+            # 按用户ID分组
+            tasks_by_user = {}
+            for task in pending_tasks:
+                user_id = task.user_id or "anonymous"
+                if user_id not in tasks_by_user:
+                    tasks_by_user[user_id] = []
+                tasks_by_user[user_id].append(task)
             
-            # 选取批次大小或全部任务
-            batch_tasks = pending_tasks[:self.batch_size]
-            logger.info(f"处理批次: {len(batch_tasks)} 任务")
+            # 从每个用户选择一个任务
+            batch_tasks = []
+            for user_id, user_tasks in tasks_by_user.items():
+                # 按创建时间排序，选择最早的任务
+                user_tasks.sort(key=lambda t: t.created_at)
+                batch_tasks.append(user_tasks[0])
+                
+                # 批次已满则停止
+                if len(batch_tasks) >= self.batch_size:
+                    break
             
-            # 更新任务状态
+            # 预检查所有语音是否可用
+            voice_ids = set(task.voice_id for task in batch_tasks)
+            try:
+                for voice_id in voice_ids:
+                    # 只检查不抛出异常，让队列保持运行
+                    if not self.pipeline.is_voice_loaded(voice_id):
+                        logger.info(f"正在加载语音: {voice_id}")
+                        await asyncio.to_thread(self.pipeline.load_voice, voice_id)
+                        logger.info(f"语音已加载: {voice_id}")
+            except Exception as e:
+                logger.error(f"语音加载失败，将继续处理其他任务: {e}")
+            
+            logger.info(f"处理批次: {len(batch_tasks)} 任务，来自 {len(set(t.user_id for t in batch_tasks))} 个不同用户")
+            
+            # 处理任务（其余代码与之前相同）
             for task in batch_tasks:
                 task.status = TaskStatus.PROCESSING
+                task.started_at = time.time()
             
             try:
                 # 收集所有文本
@@ -287,15 +316,17 @@ class TTSServiceManager:
                             logger.error(f"调试(pipeline): 保存音频失败: {e}")
                     
                     task.audio_chunks.append(audio_chunk)
-                    task.status = TaskStatus.COMPLETED
-                    task.completed_at = time.time()
-                    logger.info(f"任务完成: {task.task_id}, 文本长度: {len(task.text)}")
                     
-                    # 如果配置了输出目录，保存音频
+                    # 如果配置了输出目录，先保存音频，然后再标记任务为完成
                     if self.output_dir:
                         output_path = os.path.join(self.output_dir, f"{task.task_id}.wav")
                         await self.save_audio_chunk(audio_chunk, output_path, 24000)
                         logger.info(f"保存音频到: {output_path}")
+                    
+                    # 标记任务完成
+                    task.status = TaskStatus.COMPLETED
+                    task.completed_at = time.time()
+                    logger.info(f"任务完成: {task.task_id}, 用户: {task.user_id}, 文本长度: {len(task.text)}")
             
             except Exception as e:
                 logger.error(f"批处理失败: {e}", exc_info=True)
@@ -320,22 +351,37 @@ class TTSServiceManager:
             )
 
     async def save_audio_chunk(self, audio_tensor, filepath, sample_rate):
-        """异步保存音频片段到文件"""
+        """异步保存音频片段到文件，确保与Pipeline生成的文件完全一致"""
         try:
-            # 确保张量在CPU上且为浮点类型
-            audio_tensor = audio_tensor.cpu().float()
-            # torchaudio.save 需要 [C, T] 或 [T] 格式，确保是2D
-            if audio_tensor.ndim == 1:
-                audio_tensor = audio_tensor.unsqueeze(0)
-            elif audio_tensor.ndim > 2:
-                 # 如果有批次维度，取第一个？或者需要调用者处理好
-                 logger.warning(f"Audio tensor has unexpected dimensions {audio_tensor.shape} for saving. Taking first element.")
-                 audio_tensor = audio_tensor[0].unsqueeze(0)
-
-            await asyncio.to_thread(torchaudio.save, filepath, audio_tensor, sample_rate)
-            logger.info(f"Audio chunk saved to {filepath}")
+            # 确保目录存在
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # 确保CPU张量
+            audio_tensor = audio_tensor.cpu()
+            
+            # 始终使用unsqueeze(0)，不管维度如何
+            audio_tensor = audio_tensor.unsqueeze(0) if audio_tensor.ndim == 1 else audio_tensor
+            
+            # 强制转换为float32类型
+            audio_tensor = audio_tensor.float()
+            
+            # 完全同步方式保存，避免异步问题
+            torchaudio.save(
+                str(filepath),
+                audio_tensor, 
+                sample_rate
+            )
+            
+            logger.info(f"音频已保存到: {filepath}")
         except Exception as e:
-            logger.error(f"Failed to save audio chunk to {filepath}: {e}", exc_info=True)
+            logger.error(f"保存音频文件失败: {filepath}, 错误: {e}", exc_info=True)
+            # 尝试在出错时获取更多信息
+            try:
+                logger.error(f"张量信息: shape={audio_tensor.shape}, dtype={audio_tensor.dtype}, " 
+                             f"min={audio_tensor.min().item()}, max={audio_tensor.max().item()}")
+            except:
+                pass
+            raise
 
     async def shutdown(self):
         """优雅地关闭管理器"""

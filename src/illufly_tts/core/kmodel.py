@@ -111,15 +111,17 @@ class BatchKModel(KModel):
                 curr_padded_ids = padded_ids[i, :curr_len].unsqueeze(0)
                 curr_duration = duration_batch[i, :curr_len]
                 
-                # 处理单个样本的持续时间和对齐
+                # 处理持续时间
                 pred_dur = torch.round(curr_duration).clamp(min=1).long()
                 indices = torch.repeat_interleave(
                     torch.arange(curr_len, device=self.device), 
                     pred_dur
                 )
                 
+                # 关键修复：正确的索引顺序，完全匹配原始实现
                 pred_aln_trg = torch.zeros((curr_len, indices.shape[0]), device=self.device)
-                pred_aln_trg[torch.arange(curr_len, device=self.device)[:, None], indices] = 1
+                pred_aln_trg[indices, torch.arange(indices.shape[0], device=self.device)] = 1
+                
                 pred_aln_trg = pred_aln_trg.unsqueeze(0)
                 
                 # 提取当前样本编码

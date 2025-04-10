@@ -752,3 +752,16 @@ class CachedTTSPipeline(TTSPipeline):
         self._cached_preprocess_text.cache_clear()
         self._cached_text_to_phonemes.cache_clear()
         self._cached_phonemes_to_ipa.cache_clear()
+
+    def is_voice_loaded(self, voice_id):
+        """检查语音是否已加载，不抛出异常"""
+        try:
+            # 检查缓存
+            if voice_id in self.voices:
+                return True
+            
+            # 如果未缓存，检查文件是否存在
+            voice_path = self.get_voice_path(voice_id)
+            return os.path.exists(voice_path)
+        except:
+            return False
