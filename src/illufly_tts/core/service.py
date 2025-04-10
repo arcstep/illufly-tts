@@ -337,18 +337,32 @@ class TTSServiceManager:
                     task.completed_at = time.time()
 
     async def _async_batch_process(self, texts, voice_ids, speeds=None):
-        """异步包装器，用于调用pipeline的批处理方法"""
-        logger.info(f"调用异步批处理: {len(texts)}个文本")
-        # 如果pipeline有异步方法，优先使用
-        if hasattr(self.pipeline, 'async_batch_process_texts'):
-            return await self.pipeline.async_batch_process_texts(texts, voice_ids, speeds)
-        # 否则，使用同步方法并放在线程池中执行
-        else:
-            logger.info("使用线程池执行同步批处理方法")
-            return await asyncio.to_thread(
-                self.pipeline.batch_process_texts,
-                texts, voice_ids, speeds
-            )
+        """改进的异步包装器，添加缓存效率分析"""
+        start_time = time.time()
+        logger.info(f"批处理开始: {len(texts)}个文本")
+        
+        # 检查重复文本
+        unique_texts = set(texts)
+        if len(unique_texts) < len(texts):
+            logger.info(f"批次中包含{len(texts)-len(unique_texts)}个重复文本，应能提高缓存命中率")
+        
+        # 获取当前缓存统计
+        before_stats = self.pipeline.get_cache_stats()
+        
+        # 执行批处理
+        result = await asyncio.to_thread(
+            self.pipeline.batch_process_texts,
+            texts, voice_ids, speeds
+        )
+        
+        # 计算处理时间和缓存效率
+        process_time = time.time() - start_time
+        after_stats = self.pipeline.get_cache_stats()
+        text_hit_rate = after_stats.get("text_hit_rate", 0)
+        
+        logger.info(f"批处理完成: 耗时{process_time:.3f}秒, 缓存命中率: {text_hit_rate:.2f}")
+        
+        return result
 
     async def save_audio_chunk(self, audio_tensor, filepath, sample_rate):
         """异步保存音频片段到文件，确保与Pipeline生成的文件完全一致"""

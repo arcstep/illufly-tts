@@ -11,6 +11,7 @@ import logging
 import functools
 from typing import Dict, List, Optional, Union, Tuple, Any, Generator
 import torch
+import time
 
 from .g2p.chinese_g2p import ChineseG2P
 from .g2p.english_g2p import EnglishG2P
@@ -547,6 +548,14 @@ class TTSPipeline:
         if speeds is None:
             speeds = [1.0] * len(texts)
         
+        # 添加缓存状态日志
+        logger.info(f"批处理开始: {len(texts)}个文本, 当前缓存命中率: {self.get_cache_stats().get('text_hit_rate', 0):.2f}")
+        
+        # 批处理重复文本检测
+        unique_texts = set(texts)
+        if len(unique_texts) < len(texts):
+            logger.info(f"批处理中包含{len(texts)-len(unique_texts)}个重复文本，可充分利用缓存")
+        
         # 去重文本和语音ID，减少重复处理
         unique_texts = {}
         unique_voice_ids = set()
@@ -586,6 +595,7 @@ class TTSPipeline:
                 speeds
             )
         
+        logger.info(f"批处理完成，新缓存命中率: {self.get_cache_stats().get('text_hit_rate', 0):.2f}")
         return audio_outputs
         
     def stream_batch_process(
@@ -661,11 +671,8 @@ class CachedTTSPipeline(TTSPipeline):
         """
         super().__init__(repo_id, voices_dir, device)
         
-        # 重新设置带缓存的方法
-        self.load_voice = functools.lru_cache(maxsize=voice_cache_size)(self._uncached_load_voice)
-        self._cached_preprocess_text = functools.lru_cache(maxsize=text_cache_size)(self._uncached_preprocess_text)
-        self._cached_text_to_phonemes = functools.lru_cache(maxsize=phoneme_cache_size)(self._uncached_text_to_phonemes)
-        self._cached_phonemes_to_ipa = functools.lru_cache(maxsize=phoneme_cache_size)(self._uncached_phonemes_to_ipa)
+        self._cache_dict = {}  # 使用字典实现自定义缓存
+        self._audio_cache = {}  # 添加音频结果缓存
         
         # 缓存统计
         self.cache_stats = {
@@ -679,58 +686,55 @@ class CachedTTSPipeline(TTSPipeline):
             "ipa_misses": 0
         }
     
-    def _uncached_load_voice(self, voice_id: str) -> torch.FloatTensor:
-        """未缓存的语音包加载（被缓存装饰器包装）"""
-        self.cache_stats["voice_misses"] += 1
-        return super().load_voice(voice_id)
-    
-    def _uncached_preprocess_text(self, text: str) -> str:
-        """未缓存的文本预处理（被缓存装饰器包装）"""
-        self.cache_stats["text_misses"] += 1
-        return super().preprocess_text(text)
-    
-    def _uncached_text_to_phonemes(self, text: str) -> str:
-        """未缓存的文本到音素转换（被缓存装饰器包装）"""
-        self.cache_stats["phoneme_misses"] += 1
-        return super().text_to_phonemes(text)
-    
-    def _uncached_phonemes_to_ipa(self, phonemes: str) -> str:
-        """未缓存的音素到IPA转换（被缓存装饰器包装）"""
-        self.cache_stats["ipa_misses"] += 1
-        return super().phonemes_to_ipa(phonemes)
-    
     def preprocess_text(self, text: str) -> str:
-        """智能缓存版本的文本预处理"""
-        # 对于过长的文本，不使用缓存
-        if len(text) > 500:
-            return self._uncached_preprocess_text(text)
+        """改进的文本预处理方法，使用透明缓存"""
+        cache_key = f"text:{hash(text)}"
+        if cache_key in self._cache_dict:
+            logger.debug(f"缓存命中! preprocess_text: '{text[:20]}...'")
+            self.cache_stats["text_hits"] += 1
+            return self._cache_dict[cache_key]
         
-        # 对于短文本，先检查缓存
-        result = self._cached_preprocess_text(text)
-        self.cache_stats["text_hits"] += 1
+        # 缓存未命中，调用父类方法
+        start_time = time.time()
+        result = super().preprocess_text(text)
+        process_time = time.time() - start_time
+        
+        # 保存到缓存
+        self._cache_dict[cache_key] = result
+        self.cache_stats["text_misses"] += 1
+        logger.debug(f"缓存未命中: preprocess_text: '{text[:20]}...', 处理耗时: {process_time:.3f}秒")
+        
         return result
     
     def text_to_phonemes(self, text: str) -> str:
         """智能缓存版本的文本到音素转换"""
-        # 对于过长的文本，不使用缓存
-        if len(text) > 500:
-            return self._uncached_text_to_phonemes(text)
-        
-        # 对于短文本，先检查缓存
-        result = self._cached_text_to_phonemes(text)
-        self.cache_stats["phoneme_hits"] += 1
-        return result
+        # 使用动态字典缓存而不是lru_cache，更便于控制和观察
+        cache_key = f"text_to_phonemes_{hash(text)}"
+        if cache_key in self._cache_dict:
+            logger.debug(f"缓存命中! text_to_phonemes({text[:20]}...)")
+            self.cache_stats["phoneme_hits"] += 1
+            return self._cache_dict[cache_key]
+        else:
+            result = super().text_to_phonemes(text)
+            self._cache_dict[cache_key] = result
+            self.cache_stats["phoneme_misses"] += 1
+            logger.debug(f"缓存未命中: text_to_phonemes({text[:20]}...), 已保存")
+            return result
     
     def phonemes_to_ipa(self, phonemes: str) -> str:
         """智能缓存版本的音素到IPA转换"""
-        # 对于过长的音素序列，不使用缓存
-        if len(phonemes) > 500:
-            return self._uncached_phonemes_to_ipa(phonemes)
-        
-        # 对于短音素序列，先检查缓存
-        result = self._cached_phonemes_to_ipa(phonemes)
-        self.cache_stats["ipa_hits"] += 1
-        return result
+        # 使用动态字典缓存而不是lru_cache，更便于控制和观察
+        cache_key = f"phonemes_to_ipa_{hash(phonemes)}"
+        if cache_key in self._cache_dict:
+            logger.debug(f"缓存命中! phonemes_to_ipa({phonemes[:20]}...)")
+            self.cache_stats["ipa_hits"] += 1
+            return self._cache_dict[cache_key]
+        else:
+            result = super().phonemes_to_ipa(phonemes)
+            self._cache_dict[cache_key] = result
+            self.cache_stats["ipa_misses"] += 1
+            logger.debug(f"缓存未命中: phonemes_to_ipa({phonemes[:20]}...), 已保存")
+            return result
     
     def get_cache_stats(self) -> Dict[str, int]:
         """获取缓存统计信息"""
@@ -748,10 +752,7 @@ class CachedTTSPipeline(TTSPipeline):
     
     def clear_caches(self):
         """清除所有缓存"""
-        self.load_voice.cache_clear()
-        self._cached_preprocess_text.cache_clear()
-        self._cached_text_to_phonemes.cache_clear()
-        self._cached_phonemes_to_ipa.cache_clear()
+        self._cache_dict.clear()
 
     def is_voice_loaded(self, voice_id):
         """检查语音是否已加载，不抛出异常"""
@@ -765,3 +766,50 @@ class CachedTTSPipeline(TTSPipeline):
             return os.path.exists(voice_path)
         except:
             return False
+
+    def batch_process_texts(self, texts, voice_ids, speeds=None):
+        """重写批处理方法，添加音频结果缓存"""
+        if speeds is None:
+            speeds = [1.0] * len(texts)
+            
+        # 检查结果缓存
+        results = []
+        uncached_indices = []
+        uncached_texts = []
+        uncached_voice_ids = []
+        uncached_speeds = []
+        
+        # 先检查哪些已缓存
+        for i, (text, voice_id, speed) in enumerate(zip(texts, voice_ids, speeds)):
+            cache_key = f"audio:{voice_id}:{speed}:{hash(text)}"
+            if cache_key in self._audio_cache:
+                logger.debug(f"音频缓存命中! text={text[:20]}...")
+                results.append(self._audio_cache[cache_key])
+            else:
+                uncached_indices.append(i)
+                uncached_texts.append(text)
+                uncached_voice_ids.append(voice_id)
+                uncached_speeds.append(speed)
+                results.append(None)  # 占位
+                
+        # 如果全部命中缓存，直接返回
+        if not uncached_texts:
+            logger.info(f"全部{len(texts)}个文本命中音频缓存，跳过模型推理")
+            return results
+            
+        # 对未缓存的进行处理
+        logger.info(f"处理{len(uncached_texts)}/{len(texts)}个未缓存文本")
+        uncached_results = super().batch_process_texts(
+            uncached_texts, uncached_voice_ids, uncached_speeds)
+            
+        # 填充结果并更新缓存
+        for i, (text, voice_id, speed, audio) in enumerate(zip(
+                uncached_texts, uncached_voice_ids, uncached_speeds, uncached_results)):
+            orig_idx = uncached_indices[i]
+            results[orig_idx] = audio
+            
+            # 更新缓存
+            cache_key = f"audio:{voice_id}:{speed}:{hash(text)}"
+            self._audio_cache[cache_key] = audio
+            
+        return results
