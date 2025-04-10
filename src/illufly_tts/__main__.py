@@ -5,9 +5,13 @@ TTS服务的主入口点
 import sys
 import logging
 import click
+import os
+
 from typing import Optional
 from pathlib import Path
-import os
+
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(), override=True)
 
 # 配置日志
 logging.basicConfig(
@@ -38,18 +42,21 @@ def serve(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, ch
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
     
+    # 输出开发模式状态
+    dev_mode = os.environ.get("TTS_DEV_MODE", "").lower() in ["true", "1", "yes"]
+    logger.info(f"开发模式状态: {'已启用' if dev_mode else '已禁用'}")
+    
     # 设置调试环境变量
     if debug_output:
         debug_output_abs = os.path.abspath(debug_output)
         os.environ["TTS_DEBUG_OUTPUT"] = debug_output_abs
-        print(f"已启用调试输出，文件将保存到绝对路径: {debug_output_abs}")
         
         # 创建目录并验证
         try:
             os.makedirs(debug_output_abs, exist_ok=True)
-            print(f"调试目录已创建/确认: {debug_output_abs}")
+            logger.info(f"调试目录已创建/确认: {debug_output_abs}")
         except Exception as e:
-            print(f"警告: 创建调试目录失败: {str(e)}")
+            logger.warning(f"警告: 创建调试目录失败: {str(e)}")
     
     # 创建FastAPI应用
     app = FastAPI(
@@ -58,19 +65,25 @@ def serve(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, ch
         version="0.3.0"
     )
     
+    # 从环境变量读取CORS配置
+    cors_origins_env = os.environ.get("TTS_CORS_ORIGINS", "*")
+    if cors_origins_env == "*":
+        cors_origins = ["*"]
+    else:
+        # 将逗号分隔的字符串转换为列表
+        cors_origins = [origin.strip() for origin in cors_origins_env.split(",") if origin.strip()]
+        if not cors_origins:  # 如果为空，添加一个默认值
+            cors_origins = ["http://localhost:3000"]
+        logger.info(f"使用自定义CORS源: {cors_origins}")
+    
     # 添加CORS支持
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
-    # 简单的用户鉴权函数
-    async def get_current_user():
-        """开发环境下的简单用户认证，总是返回测试用户"""
-        return {"user_id": "test_user", "username": "测试用户"}
     
     # 根路径处理
     @app.get("/")
@@ -102,7 +115,6 @@ def serve(host, port, repo_id, voices_dir, device, batch_size, max_wait_time, ch
     logger.info(f"启动TTS服务: repo_id={repo_id}")
     mount_tts_service(
         app=app,
-        require_user=get_current_user,
         repo_id=repo_id,
         voices_dir=voices_dir_param,  # 可能为None，这是正常的
         device=device,

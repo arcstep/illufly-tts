@@ -27,7 +27,8 @@ class TTSPipeline:
         self,
         repo_id: str,
         voices_dir: str = None,
-        device: str = None
+        device: str = None,
+        default_language: str = "zh"  # 新增默认语言参数
     ):
         """初始化TTS流水线
         
@@ -35,11 +36,13 @@ class TTSPipeline:
             repo_id: 模型ID或路径
             voices_dir: 语音目录
             device: 设备名称
+            default_language: 默认语言，用于处理无明确语言上下文的文本
         """
         self.repo_id = repo_id
         self.voices_dir = voices_dir
         self.device = device
         self.sample_rate = 24000  # 采样率
+        self.default_language = default_language  # 存储默认语言设置
         
         # 初始化英文G2P
         self.en_g2p = EnglishG2P()
@@ -249,14 +252,26 @@ class TTSPipeline:
                 is_after_currency = prev_char in ['￥', '¥', '$', '€', '£', '₽', '₹']
                 
                 # 检查上下文来判断数字应该使用哪种语言处理
+                # 初始化语言变量为None
+                language_context = None
+                
+                # 中文上下文线索
                 if (has_temp_unit or 
                     (next_char and '\u4e00' <= next_char <= '\u9fff') or 
                     prev_type == 'zh' or
                     is_after_currency and prev_type == 'zh' or
                     (prev_char and '\u4e00' <= prev_char <= '\u9fff')):
-                    chunks.append(('zh', number_text))
-                else:
-                    chunks.append(('en', number_text))
+                    language_context = 'zh'
+                # 英文上下文线索
+                elif prev_type == 'en' or (next_char.isalpha() and not '\u4e00' <= next_char <= '\u9fff'):
+                    language_context = 'en'
+                
+                # 如果没有明确上下文，使用默认语言
+                if language_context is None:
+                    language_context = self.default_language
+                    logger.debug(f"纯数字文本 '{number_text}' 无明确语言上下文，使用默认语言: {self.default_language}")
+                
+                chunks.append((language_context, number_text))
             else:  # 标点符号
                 # 根据前后文判断标点符号归属
                 prev_type = chunks[-1][0] if chunks else None
@@ -655,6 +670,7 @@ class CachedTTSPipeline(TTSPipeline):
         repo_id: str,
         voices_dir: str = None,
         device: str = "cpu",
+        default_language: str = "zh",  # 添加默认语言参数
         voice_cache_size: int = 32,    # 语音包缓存大小
         text_cache_size: int = 1024,   # 文本处理缓存大小
         phoneme_cache_size: int = 1024 # 音素处理缓存大小
@@ -665,11 +681,12 @@ class CachedTTSPipeline(TTSPipeline):
             repo_id: 模型ID或路径
             voices_dir: 语音目录
             device: 设备名称
+            default_language: 默认语言，用于处理无明确语言上下文的文本
             voice_cache_size: 语音包缓存大小
             text_cache_size: 文本处理缓存大小
             phoneme_cache_size: 音素处理缓存大小
         """
-        super().__init__(repo_id, voices_dir, device)
+        super().__init__(repo_id, voices_dir, device, default_language)
         
         self._cache_dict = {}  # 使用字典实现自定义缓存
         self._audio_cache = {}  # 添加音频结果缓存

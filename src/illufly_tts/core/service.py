@@ -41,6 +41,7 @@ class TTSTask:
         self.error = None
         self.audio_chunks = []  # 存储生成的音频片段
         self.debug_id = None  # 新增debug_id属性
+        self.sequence_id = time.time()  # 新增序列ID属性，默认使用当前时间
 
 class TTSServiceManager:
     def __init__(
@@ -68,7 +69,7 @@ class TTSServiceManager:
         self.output_dir = output_dir
         self.processing_task = None  # 初始化时不创建任务
         
-    async def submit_task(self, text: str, voice_id: str, speed: float = 1.0, user_id: Optional[str] = None, debug_id: Optional[str] = None) -> str:
+    async def submit_task(self, text: str, voice_id: str, speed: float = 1.0, user_id: Optional[str] = None, debug_id: Optional[str] = None, sequence_id: Optional[float] = None) -> str:
         """提交一个TTS任务
         
         Args:
@@ -77,6 +78,7 @@ class TTSServiceManager:
             speed: 语速
             user_id: 用户ID（可选）
             debug_id: 调试ID（可选）
+            sequence_id: 序列ID，用于保持消息顺序（可选）
             
         Returns:
             任务ID
@@ -101,10 +103,13 @@ class TTSServiceManager:
         task_id = str(uuid.uuid4())
         task = TTSTask(task_id, text, voice_id, speed, user_id)
         task.debug_id = debug_id  # 添加这行
+        # 设置序列ID，优先使用传入的值，否则使用默认值
+        if sequence_id is not None:
+            task.sequence_id = sequence_id
         self.tasks[task_id] = task
         
         # 将任务添加到队列
-        logger.debug(f"将任务 {task_id} 添加到队列，当前队列大小: {self.task_queue.qsize()}")
+        logger.debug(f"将任务 {task_id} 添加到队列，当前队列大小: {self.task_queue.qsize()}, 序列ID: {task.sequence_id}")
         await self.task_queue.put(task)
         logger.debug(f"任务 {task_id} 已添加到队列")
         
@@ -256,8 +261,8 @@ class TTSServiceManager:
             # 从每个用户选择一个任务
             batch_tasks = []
             for user_id, user_tasks in tasks_by_user.items():
-                # 按创建时间排序，选择最早的任务
-                user_tasks.sort(key=lambda t: t.created_at)
+                # 按序列ID排序，而不是创建时间，确保处理顺序与提交顺序一致
+                user_tasks.sort(key=lambda t: t.sequence_id)
                 batch_tasks.append(user_tasks[0])
                 
                 # 批次已满则停止
@@ -293,7 +298,8 @@ class TTSServiceManager:
                 
                 # 批量处理
                 chunk_results = await self._async_batch_process(
-                    batch_texts, batch_voice_ids, batch_speeds)
+                    batch_texts, batch_voice_ids, batch_speeds
+                )
                 
                 # 处理结果
                 for i, task in enumerate(batch_tasks):
@@ -413,3 +419,24 @@ class TTSServiceManager:
         # 等待队列中的任务被处理或标记为取消/失败？（可选）
         # 目前不等待，直接结束
         logger.info("TTSServiceManager shutdown complete.")
+
+    async def cancel_user_pending_tasks(self, user_id: str) -> int:
+        """取消用户的所有待处理任务
+        
+        Args:
+            user_id: 用户ID
+            
+        Returns:
+            成功取消的任务数量
+        """
+        if not user_id:
+            return 0
+            
+        canceled_count = 0
+        for task_id, task in self.tasks.items():
+            if task.user_id == user_id and task.status == TaskStatus.PENDING:
+                task.status = TaskStatus.CANCELED
+                canceled_count += 1
+                logger.info(f"已取消用户 {user_id} 的任务 {task_id}")
+        
+        return canceled_count
