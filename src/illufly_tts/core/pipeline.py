@@ -25,7 +25,7 @@ class TTSPipeline:
     def __init__(
         self,
         repo_id: str,
-        voices_dir: str = "voices",  # 默认值改为 "voices"
+        voices_dir: str = None,
         device: str = None
     ):
         """初始化TTS流水线
@@ -37,11 +37,6 @@ class TTSPipeline:
         """
         self.repo_id = repo_id
         self.voices_dir = voices_dir
-        # 如果 voices_dir 是相对路径，尝试从模型目录查找
-        if not os.path.isabs(voices_dir):
-            model_voices = os.path.join(os.path.dirname(repo_id), "voices")
-            if os.path.exists(model_voices):
-                self.voices_dir = model_voices
         self.device = device
         self.sample_rate = 24000  # 采样率
         
@@ -84,37 +79,18 @@ class TTSPipeline:
         # 搜索路径顺序
         search_paths = []
         
-        # 1. 首先检查指定的 voices_dir
-        search_paths.append((self.voices_dir, ".pt"))
-        search_paths.append((self.voices_dir, ".pth"))
+        # 1. 首先检查指定路径
+        if self.voices_dir:
+            search_paths.append((self.voices_dir, ".pt"))
         
-        # 2. 检查模型文件所在目录下的 voices 目录
-        # 这里需要处理不同的模型路径格式
-        if "/" in self.repo_id:  # 如果是 'hexgrad/Kokoro-82M-v1.1-zh' 格式
-            # 从环境变量获取HF缓存根目录
-            import os
-            hf_cache = os.environ.get("HF_HUB_CACHE", "models")
-            
-            # 2.1 尝试直接访问 models 目录下的模型目录
-            direct_model_path = os.path.join(hf_cache, self.repo_id.split("/")[-1])
-            if os.path.exists(direct_model_path):
-                search_paths.append((os.path.join(direct_model_path, "voices"), ".pt"))
-            
-            # 2.2 尝试访问HF标准目录结构 (models--org--model)
-            org, model_name = self.repo_id.split("/")
-            hf_model_path = os.path.join(hf_cache, f"models--{org}--{model_name}")
-            
-            # 查找最新的snapshot
-            if os.path.exists(hf_model_path):
-                snapshot_dir = os.path.join(hf_model_path, "snapshots")
-                if os.path.exists(snapshot_dir):
-                    # 获取最新的snapshot目录
-                    snapshots = [d for d in os.listdir(snapshot_dir) 
-                                if os.path.isdir(os.path.join(snapshot_dir, d))]
-                    if snapshots:
-                        # 这里简化处理，假设第一个就是最新的
-                        latest = os.path.join(snapshot_dir, snapshots[0])
-                        search_paths.append((os.path.join(latest, "voices"), ".pt"))
+        # 2. 检查HF缓存路径
+        from huggingface_hub import snapshot_download, hf_hub_download
+        try:
+            # 尝试直接从HF下载/获取路径
+            model_dir = snapshot_download(self.repo_id)
+            search_paths.append((os.path.join(model_dir, "voices"), ".pt"))
+        except:
+            pass
         
         # 实际查找文件
         for base_path, ext in search_paths:
@@ -667,7 +643,7 @@ class CachedTTSPipeline(TTSPipeline):
     def __init__(
         self,
         repo_id: str,
-        voices_dir: str,
+        voices_dir: str = None,
         device: str = "cpu",
         voice_cache_size: int = 32,    # 语音包缓存大小
         text_cache_size: int = 1024,   # 文本处理缓存大小

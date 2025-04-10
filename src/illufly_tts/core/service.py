@@ -40,6 +40,7 @@ class TTSTask:
         self.result = None
         self.error = None
         self.audio_chunks = []  # 存储生成的音频片段
+        self.debug_id = None  # 新增debug_id属性
 
 class TTSServiceManager:
     def __init__(
@@ -67,7 +68,7 @@ class TTSServiceManager:
         self.output_dir = output_dir
         self.processing_task = None  # 初始化时不创建任务
         
-    async def submit_task(self, text: str, voice_id: str, speed: float = 1.0, user_id: Optional[str] = None) -> str:
+    async def submit_task(self, text: str, voice_id: str, speed: float = 1.0, user_id: Optional[str] = None, debug_id: Optional[str] = None) -> str:
         """提交一个TTS任务
         
         Args:
@@ -75,13 +76,31 @@ class TTSServiceManager:
             voice_id: 语音ID
             speed: 语速
             user_id: 用户ID（可选）
+            debug_id: 调试ID（可选）
             
         Returns:
             任务ID
         """
         logger.debug(f"提交任务: '{text[:20]}...' voice={voice_id}")
+        
+        # 先验证语音是否存在
+        try:
+            # 尝试预加载语音验证其存在性
+            await asyncio.to_thread(self.pipeline.load_voice, voice_id)
+        except ValueError as e:
+            logger.error(f"语音加载失败（严重错误）: {e}")
+            # 创建失败任务并立即标记失败
+            task_id = str(uuid.uuid4())
+            task = TTSTask(task_id, text, voice_id, speed, user_id)
+            task.status = TaskStatus.FAILED
+            task.error = f"语音加载错误: {str(e)}"
+            task.completed_at = time.time()
+            self.tasks[task_id] = task
+            return task_id
+        
         task_id = str(uuid.uuid4())
         task = TTSTask(task_id, text, voice_id, speed, user_id)
+        task.debug_id = debug_id  # 添加这行
         self.tasks[task_id] = task
         
         # 将任务添加到队列
@@ -153,41 +172,48 @@ class TTSServiceManager:
         return user_tasks
     
     async def stream_result(self, task_id: str) -> AsyncGenerator[torch.Tensor, None]:
-        """流式获取任务结果
-        
-        Args:
-            task_id: 任务ID
-            
-        Yields:
-            生成的音频片段
-        """
+        """流式获取任务结果"""
         if task_id not in self.tasks:
-            raise ValueError(f"任务不存在: {task_id}")
-            
+            logger.error(f"找不到任务: {task_id}")
+            raise ValueError(f"找不到任务: {task_id}")
+        
         task = self.tasks[task_id]
         
-        # 已完成的任务可以直接返回所有结果
-        if task.status == TaskStatus.COMPLETED:
-            for chunk in task.audio_chunks:
-                yield chunk
-            return
+        # 等待任务完成
+        while task.status == TaskStatus.PROCESSING:
+            await asyncio.sleep(0.1)
         
-        # 处理中的任务需要等待新的结果
-        current_index = 0
-        while task.status in [TaskStatus.PENDING, TaskStatus.PROCESSING]:
-            # 如果有新的音频片段
-            if current_index < len(task.audio_chunks):
-                yield task.audio_chunks[current_index]
-                current_index += 1
-            else:
-                # 等待新的结果
-                await asyncio.sleep(0.1)
+        if task.status == TaskStatus.FAILED:
+            logger.error(f"任务失败: {task_id}, 错误: {task.error}")
+            raise ValueError(f"任务失败: {task.error}")
         
-        # 任务完成后，确保返回所有剩余的结果
-        while current_index < len(task.audio_chunks):
-            yield task.audio_chunks[current_index]
-            current_index += 1
-    
+        if task.status == TaskStatus.CANCELED:
+            logger.error(f"任务被取消: {task_id}")
+            raise ValueError("任务被取消")
+        
+        # 流式返回音频块
+        for chunk in task.audio_chunks:
+            logger.info(f"返回音频块: {task_id}, 形状: {chunk.shape}")
+            
+            # 调试输出
+            debug_output_dir = os.environ.get("TTS_DEBUG_OUTPUT")
+            if debug_output_dir and hasattr(task, 'debug_id') and task.debug_id:
+                # 创建递增的文件名
+                chunk_index = task.audio_chunks.index(chunk)
+                debug_path = os.path.join(debug_output_dir, f"{task.debug_id}_stream_chunk_{chunk_index}.wav")
+                try:
+                    logger.error(f"调试(stream): 尝试保存音频块到 {debug_path}")
+                    # 保存文件
+                    audio_to_save = chunk.cpu().float()
+                    if audio_to_save.ndim == 1:
+                        audio_to_save = audio_to_save.unsqueeze(0)
+                    await asyncio.to_thread(torchaudio.save, debug_path, audio_to_save, 24000)
+                    logger.error(f"调试(stream): 已保存音频块到 {debug_path}")
+                except Exception as e:
+                    logger.error(f"调试(stream): 保存音频块失败: {e}")
+            
+            yield chunk
+
     async def start(self):
         """异步启动服务"""
         if not self.processing_task or self.processing_task.done():
@@ -199,152 +225,99 @@ class TTSServiceManager:
 
     async def _batch_processing_loop(self):
         """批处理循环"""
-        logger.info("批处理循环进入主循环")
-        loop_count = 0
-        
         while True:
-            loop_count += 1
-            logger.debug(f"批处理迭代 #{loop_count}")
-            batch_tasks = []
-            first_task = None
-            try:
-                # 获取第一个任务，设置较短超时以快速响应
-                logger.debug(f"等待第一个任务... (队列大小: {self.task_queue.qsize()})")
-                first_task = await asyncio.wait_for(self.task_queue.get(), timeout=self.max_wait_time * 2) # 使用超时
-                logger.debug(f"获取到第一个任务: {first_task.task_id}")
-
-                if first_task.status != TaskStatus.PENDING:
-                    logger.warning(f"跳过非挂起任务 {first_task.task_id}，状态: {first_task.status}")
-                    self.task_queue.task_done()
-                    continue
-
-                batch_tasks.append(first_task)
-                first_task.status = TaskStatus.PROCESSING # 标记为处理中
-                first_task.started_at = time.time()
-                logger.debug(f"任务 {first_task.task_id} 状态更新为处理中")
-
-                # 收集更多任务直到达到批次大小或超时
-                batch_collection_start_time = time.time()
-                while len(batch_tasks) < self.batch_size:
-                    try:
-                        # 尝试立即获取，不阻塞
-                        logger.debug("尝试获取更多任务...")
-                        task = self.task_queue.get_nowait()
-                        if task.status == TaskStatus.PENDING:
-                            batch_tasks.append(task)
-                            task.status = TaskStatus.PROCESSING
-                            task.started_at = time.time()
-                            logger.debug(f"添加任务 {task.task_id} 到批次")
-                        else:
-                             logger.warning(f"跳过非挂起任务 {task.task_id}，状态: {task.status}")
-                             self.task_queue.task_done() # 也要标记完成
-
-                        # 检查是否超时
-                        if time.time() - batch_collection_start_time > self.max_wait_time:
-                             logger.debug("批次收集已达到最大等待时间")
-                             break
-
-                    except asyncio.QueueEmpty:
-                        # 如果队列空了，并且等待时间超过 max_wait_time，则处理当前批次
-                        if time.time() - batch_collection_start_time > self.max_wait_time:
-                            logger.debug("队列为空且已达到最大等待时间")
-                            break
-                        # 否则短暂等待后继续尝试
-                        logger.debug("队列为空，短暂等待...")
-                        await asyncio.sleep(0.01)
-                    except Exception as e:
-                        logger.error(f"获取任务时出错: {e}", exc_info=True)
-                        # 避免死循环
-                        if time.time() - batch_collection_start_time > self.max_wait_time * 2:
-                            logger.warning("由于持续错误，中断批次收集")
-                            break
-                        await asyncio.sleep(0.05)
-
-            except asyncio.TimeoutError:
-                # 等待第一个任务超时，正常现象，继续循环
-                logger.debug("等待第一个任务超时，继续循环")
+            # 收集待处理的任务
+            pending_tasks = [task for task in self.tasks.values() 
+                              if task.status == TaskStatus.PENDING]
+            
+            if not pending_tasks:
+                await asyncio.sleep(0.1)
                 continue
-            except asyncio.CancelledError:
-                 logger.info("批处理循环被取消")
-                 # 将仍在处理中的任务放回队列或标记为失败？ TBD
-                 # 目前简单退出
-                 break
-            except Exception as e:
-                logger.error(f"获取第一个任务时出错: {e}", exc_info=True)
-                if first_task: # 如果是因为第一个任务出错，标记它
-                    first_task.status = TaskStatus.FAILED
-                    first_task.error = str(e)
-                    first_task.completed_at = time.time()
-                    self.task_queue.task_done() # 别忘了标记
-                await asyncio.sleep(0.1) # 发生错误时稍作等待
-                continue
-
-            # 如果没有收集到任务，继续循环
-            if not batch_tasks:
-                logger.debug("没有收集到任务，继续循环")
-                continue
-
-            # 处理批次
-            logger.info(f"处理 {len(batch_tasks)} 个任务的批次: {[t.task_id for t in batch_tasks]}")
+            
+            # 等待足够的任务或超过最大等待时间
+            if len(pending_tasks) < self.batch_size:
+                start_time = time.time()
+                while (len(pending_tasks) < self.batch_size and 
+                       time.time() - start_time < self.max_wait_time):
+                    await asyncio.sleep(0.05)
+                    # 更新待处理任务列表
+                    pending_tasks = [task for task in self.tasks.values() 
+                                    if task.status == TaskStatus.PENDING]
+                    if len(pending_tasks) >= self.batch_size:
+                        break
+            
+            # 选取批次大小或全部任务
+            batch_tasks = pending_tasks[:self.batch_size]
+            logger.info(f"处理批次: {len(batch_tasks)} 任务")
+            
+            # 更新任务状态
+            for task in batch_tasks:
+                task.status = TaskStatus.PROCESSING
             
             try:
-                # 简化这部分：不分片处理，直接调用批处理
-                texts = [task.text for task in batch_tasks]
-                voice_ids = [task.voice_id for task in batch_tasks]
-                speeds = [task.speed for task in batch_tasks]
+                # 收集所有文本
+                batch_texts = [task.text for task in batch_tasks]
+                # 收集所有语音ID
+                batch_voice_ids = [task.voice_id for task in batch_tasks]
+                # 收集所有速度设置
+                batch_speeds = [task.speed for task in batch_tasks]
                 
-                logger.debug(f"调用批处理: {len(texts)} 个文本")
-                # 添加超时，防止无限等待
-                try:
-                    chunk_results = await asyncio.wait_for(
-                        self.pipeline.async_batch_process_texts(texts, voice_ids, speeds),
-                        timeout=10.0
-                    )
+                # 批量处理
+                chunk_results = await self._async_batch_process(
+                    batch_texts, batch_voice_ids, batch_speeds)
+                
+                # 处理结果
+                for i, task in enumerate(batch_tasks):
+                    audio_chunk = chunk_results[i]
                     
-                    # 处理结果
-                    for i, task in enumerate(batch_tasks):
-                        audio_chunk = chunk_results[i]
-                        task.audio_chunks.append(audio_chunk)
-                        logger.debug(f"任务 {task.task_id} 生成了音频块")
-                        
-                        # 标记任务完成
-                        task.status = TaskStatus.COMPLETED
-                        task.completed_at = time.time()
-                        logger.info(f"任务 {task.task_id} 已完成")
-                        
-                except asyncio.TimeoutError:
-                    logger.error("批处理超时")
-                    # 将所有任务标记为失败
-                    for task in batch_tasks:
-                        task.status = TaskStatus.FAILED
-                        task.error = "处理超时"
-                        task.completed_at = time.time()
-                        logger.error(f"任务 {task.task_id} 因超时而失败")
-                        
-                except Exception as e:
-                    logger.error(f"批处理中发生错误: {e}", exc_info=True)
-                    # 将所有任务标记为失败
-                    for task in batch_tasks:
-                        task.status = TaskStatus.FAILED
-                        task.error = f"处理错误: {e}"
-                        task.completed_at = time.time()
-                        logger.error(f"任务 {task.task_id} 因错误而失败: {e}")
+                    # 调试输出
+                    debug_output_dir = os.environ.get("TTS_DEBUG_OUTPUT")
+                    if debug_output_dir and hasattr(task, 'debug_id') and task.debug_id:
+                        debug_path = os.path.join(debug_output_dir, f"{task.debug_id}_pipeline_output.wav")
+                        os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+                        try:
+                            logger.error(f"调试(pipeline): 尝试保存输出到 {debug_path}")
+                            # 保存文件
+                            audio_to_save = audio_chunk.cpu().float()
+                            if audio_to_save.ndim == 1:
+                                audio_to_save = audio_to_save.unsqueeze(0)
+                            await asyncio.to_thread(torchaudio.save, debug_path, audio_to_save, 24000)
+                            logger.error(f"调试(pipeline): 已保存管道输出到 {debug_path}")
+                        except Exception as e:
+                            logger.error(f"调试(pipeline): 保存音频失败: {e}")
                     
+                    task.audio_chunks.append(audio_chunk)
+                    task.status = TaskStatus.COMPLETED
+                    task.completed_at = time.time()
+                    logger.info(f"任务完成: {task.task_id}, 文本长度: {len(task.text)}")
+                    
+                    # 如果配置了输出目录，保存音频
+                    if self.output_dir:
+                        output_path = os.path.join(self.output_dir, f"{task.task_id}.wav")
+                        await self.save_audio_chunk(audio_chunk, output_path, 24000)
+                        logger.info(f"保存音频到: {output_path}")
+            
             except Exception as e:
-                logger.error(f"处理批次时发生错误: {e}", exc_info=True)
-                # 将批次中所有仍在处理的任务标记为失败
+                logger.error(f"批处理失败: {e}", exc_info=True)
+                # 更新所有任务状态为失败
                 for task in batch_tasks:
-                    if task.status == TaskStatus.PROCESSING:
-                        task.status = TaskStatus.FAILED
-                        task.error = f"批处理错误: {e}"
-                        task.completed_at = time.time()
-                        logger.error(f"任务 {task.task_id} 因批处理错误而失败: {e}")
+                    task.status = TaskStatus.FAILED
+                    task.error = str(e)
+                    task.completed_at = time.time()
 
-            finally:
-                # 标记所有任务为完成（无论成功或失败）
-                for task in batch_tasks:
-                     self.task_queue.task_done()
-                logger.info(f"已完成处理 {len(batch_tasks)} 个任务的批次")
+    async def _async_batch_process(self, texts, voice_ids, speeds=None):
+        """异步包装器，用于调用pipeline的批处理方法"""
+        logger.info(f"调用异步批处理: {len(texts)}个文本")
+        # 如果pipeline有异步方法，优先使用
+        if hasattr(self.pipeline, 'async_batch_process_texts'):
+            return await self.pipeline.async_batch_process_texts(texts, voice_ids, speeds)
+        # 否则，使用同步方法并放在线程池中执行
+        else:
+            logger.info("使用线程池执行同步批处理方法")
+            return await asyncio.to_thread(
+                self.pipeline.batch_process_texts,
+                texts, voice_ids, speeds
+            )
 
     async def save_audio_chunk(self, audio_tensor, filepath, sample_rate):
         """异步保存音频片段到文件"""

@@ -27,23 +27,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from src.illufly_tts.utils.logging_config import configure_logging
-
-# 配置更详细的日志
-configure_logging(
-    level=logging.DEBUG,
-    log_file='tests/output/processing/debug.log',
-    debug_modules=[
-        'illufly_tts.g2p.chinese_g2p',
-        'illufly_tts.g2p.mixed_g2p'
-    ]
-)
-
 # 添加src目录到PATH
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
 
-from illufly_tts.g2p.chinese_g2p import ChineseG2P
-from illufly_tts.pipeline import TTSPipeline
+from illufly_tts.core.g2p.chinese_g2p import ChineseG2P
+from illufly_tts.core.pipeline import TTSPipeline
 from misaki.zh import ZHG2P  # 用于直接比较
 
 # 设置日志格式

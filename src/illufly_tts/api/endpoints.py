@@ -1,16 +1,23 @@
 """
-文本转语音服务的FastAPI接口 - 轻量级版本
+文本转语音服务的FastAPI接口 - 直接使用TTSServiceManager和Pipeline的简化版本
 """
 import os
 import logging
 import asyncio
+import base64
+import io
+import time
+import tempfile
+import uuid
 from typing import Any, Dict, List, Optional, Callable, Awaitable, Union
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 
-# 使用相对导入，客户端可以选择自己复制mcp_client.py
-from ..client.mcp_client import TTSMcpClient
+# 直接导入ServiceManager和Pipeline
+from ..core.service import TTSServiceManager
+from ..core.pipeline import CachedTTSPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -31,132 +38,240 @@ UserDict = Dict[str, Any]
 def mount_tts_service(
     app: FastAPI,
     require_user: Callable[[], Awaitable[UserDict]],
-    host: str = "localhost",
-    port: int = 8000,
-    prefix: str = "/api",
-    use_stdio: bool = True,
-    process_command: Optional[str] = None,
-    process_args: Optional[List[str]] = None
-) -> TTSMcpClient:
-    """挂载TTS服务到FastAPI应用
-    
-    支持通过网络或子进程方式连接到MCP服务器
-    
-    Args:
-        app: FastAPI应用
-        require_user: 获取当前用户的函数
-        host: MCP服务器主机 (当use_stdio=False时使用)
-        port: MCP服务器端口 (当use_stdio=False时使用)
-        prefix: API前缀
-        use_stdio: 是否使用stdio传输 (子进程方式)
-        process_command: 子进程命令 (当use_stdio=True时使用)
-        process_args: 子进程参数 (当use_stdio=True时使用)
-        
-    Returns:
-        TTSMcpClient: MCP客户端
-    """
-    # 创建MCP客户端
-    if use_stdio:
-        if not process_command:
-            raise ValueError("使用stdio传输时必须提供process_command参数")
-        
-        client = TTSMcpClient(
-            process_command=process_command,
-            process_args=process_args or [],
-            use_stdio=True
-        )
-        logger.info(f"使用stdio传输连接到TTS服务: {process_command}")
-    else:
-        client = TTSMcpClient(
-            host=host,
-            port=port,
-            use_stdio=False
-        )
-        logger.info(f"使用网络连接到TTS服务: {host}:{port}")
-    
-    # 全局共享客户端实例（单例模式）
-    app.state.tts_client = client
-    
-    # 创建API路由
+    repo_id: str = "hexgrad/Kokoro-82M-v1.1-zh",
+    voices_dir: Optional[str] = None,
+    device: Optional[str] = None,
+    batch_size: int = 4,
+    max_wait_time: float = 0.2,
+    chunk_size: int = 200,
+    output_dir: Optional[str] = None,
+    prefix: str = "/api"
+) -> None:
+    """挂载TTS服务到FastAPI应用"""
+    # 创建路由
     router = APIRouter()
     
-    # 用于获取客户端的依赖
-    async def get_tts_client():
-        if not hasattr(app.state, "tts_client_initialized"):
-            # 首次使用时初始化连接
-            try:
-                await app.state.tts_client._ensure_connected()
-                app.state.tts_client_initialized = True
-                logger.info("TTS客户端连接初始化成功")
-            except Exception as e:
-                logger.error(f"TTS客户端连接初始化失败: {e}")
-                # 不在这里抛出异常，让实际API调用时处理错误
-                pass
-        return app.state.tts_client
+    logger.info(f"创建TTSServiceManager和Pipeline: repo_id={repo_id}, voices_dir={voices_dir or '使用HF缓存'}")
+    
+    @app.on_event("startup")
+    async def startup_service_manager():
+        # 创建服务管理器实例
+        app.state.service_manager = TTSServiceManager(
+            repo_id=repo_id,
+            voices_dir=voices_dir,
+            device=device,
+            batch_size=batch_size,
+            max_wait_time=max_wait_time,
+            chunk_size=chunk_size,
+            output_dir=output_dir
+        )
+        
+        # 创建独立的Pipeline用于直接生成音频
+        app.state.pipeline = CachedTTSPipeline(
+            repo_id=repo_id,
+            voices_dir=voices_dir,
+            device=device
+        )
+        
+        # 启动服务
+        await app.state.service_manager.start()
+        logger.info("TTS服务已启动")
+    
+    # 获取服务管理器的依赖
+    async def get_service_manager():
+        return app.state.service_manager
+    
+    # 获取Pipeline的依赖
+    async def get_pipeline():
+        return app.state.pipeline
     
     @router.post("/tts")
     async def text_to_speech(
-        request: TextToSpeechRequest,
+        request: TextToSpeechRequest, 
         user: UserDict = Depends(require_user),
-        client: TTSMcpClient = Depends(get_tts_client)
+        service_manager: TTSServiceManager = Depends(get_service_manager),
+        pipeline: CachedTTSPipeline = Depends(get_pipeline)
     ):
         """将文本转换为语音"""
         try:
-            result = await client.text_to_speech(request.text, request.voice)
-            if isinstance(result, dict) and result.get("status") == "error":
-                raise HTTPException(status_code=500, detail=result.get("error", "转换失败"))
-            return result
+            # 提交任务到服务管理器（仅跟踪状态用）
+            logger.info(f"提交TTS任务: 文本长度={len(request.text)}, 语音={request.voice}")
+            voice_id = request.voice or "zf_001"
+            task_id = await service_manager.submit_task(
+                text=request.text,
+                voice_id=voice_id,
+                user_id=user.get("user_id")
+            )
+            
+            # 等待任务完成
+            while True:
+                status = await service_manager.get_task_status(task_id)
+                if status["status"] in ["completed", "failed", "canceled"]:
+                    break
+                await asyncio.sleep(0.1)
+            
+            # 检查任务状态
+            if status["status"] != "completed":
+                error_message = status.get("error", "处理失败")
+                logger.error(f"TTS任务失败: {error_message}")
+                raise HTTPException(status_code=400, detail=error_message)
+            
+            # 创建临时文件路径
+            temp_file_path = os.path.join(tempfile.gettempdir(), f"{task_id}.wav")
+            
+            try:
+                # 使用Pipeline直接生成音频并保存（而不是从service_manager获取）
+                # 这是确保音频质量的关键一步
+                await asyncio.to_thread(
+                    pipeline.process,
+                    text=request.text, 
+                    voice_id=voice_id,
+                    output_path=temp_file_path
+                )
+                logger.info(f"使用Pipeline生成音频，已保存到: {temp_file_path}")
+                
+                # 读取文件并转换为base64
+                with open(temp_file_path, "rb") as f:
+                    file_bytes = f.read()
+                    audio_base64 = base64.b64encode(file_bytes).decode("utf-8")
+                
+                # 返回结果
+                return {
+                    "task_id": task_id,
+                    "status": "success",
+                    "audio_base64": audio_base64,
+                    "sample_rate": 24000,
+                    "created_at": status["created_at"],
+                    "completed_at": status["completed_at"]
+                }
+            finally:
+                # 清理临时文件
+                try:
+                    if os.path.exists(temp_file_path):
+                        os.remove(temp_file_path)
+                        logger.debug(f"临时文件已清理: {temp_file_path}")
+                except Exception as e:
+                    logger.warning(f"清理临时文件失败: {e}")
+            
         except Exception as e:
-            logger.error(f"TTS调用失败: {str(e)}")
+            import traceback
+            logger.error(f"TTS处理失败: {e}\n{traceback.format_exc()}")
             raise HTTPException(status_code=500, detail=str(e))
     
     @router.post("/tts/batch")
     async def batch_text_to_speech(
         request: BatchTextToSpeechRequest,
         user: UserDict = Depends(require_user),
-        client: TTSMcpClient = Depends(get_tts_client)
+        service_manager: TTSServiceManager = Depends(get_service_manager),
+        pipeline: CachedTTSPipeline = Depends(get_pipeline)
     ):
         """批量将文本转换为语音"""
         try:
-            results = await client.batch_text_to_speech(request.texts, request.voice)
+            results = []
+            for i, text in enumerate(request.texts):
+                # 提交任务跟踪状态
+                voice_id = request.voice or "zf_001"
+                task_id = await service_manager.submit_task(
+                    text=text,
+                    voice_id=voice_id,
+                    user_id=user.get("user_id")
+                )
+                
+                # 等待任务完成
+                while True:
+                    status = await service_manager.get_task_status(task_id)
+                    if status["status"] in ["completed", "failed", "canceled"]:
+                        break
+                    await asyncio.sleep(0.1)
+                
+                # 处理结果
+                if status["status"] == "completed":
+                    # 使用临时文件和pipeline直接生成
+                    temp_file_path = os.path.join(tempfile.gettempdir(), f"batch_{task_id}.wav")
+                    
+                    try:
+                        # 使用Pipeline直接生成音频
+                        await asyncio.to_thread(
+                            pipeline.process,
+                            text=text, 
+                            voice_id=voice_id,
+                            output_path=temp_file_path
+                        )
+                        
+                        # 读取文件并转换为base64
+                        with open(temp_file_path, "rb") as f:
+                            file_bytes = f.read()
+                            audio_base64 = base64.b64encode(file_bytes).decode("utf-8")
+                        
+                        # 添加到结果
+                        results.append({
+                            "status": "success",
+                            "task_id": task_id,
+                            "audio_base64": audio_base64,
+                            "sample_rate": 24000,
+                            "created_at": status["created_at"],
+                            "completed_at": status["completed_at"]
+                        })
+                    except Exception as e:
+                        logger.error(f"生成第{i+1}个音频失败: {e}")
+                        results.append({
+                            "status": "error",
+                            "task_id": task_id,
+                            "error": f"生成音频失败: {str(e)}"
+                        })
+                    finally:
+                        # 清理临时文件
+                        try:
+                            if os.path.exists(temp_file_path):
+                                os.remove(temp_file_path)
+                        except:
+                            pass
+                else:
+                    # 失败或取消
+                    results.append({
+                        "status": "error",
+                        "task_id": task_id,
+                        "error": status.get("error", f"任务{status['status']}")
+                    })
+            
             return {"results": results}
         except Exception as e:
-            logger.error(f"批量TTS调用失败: {str(e)}")
+            logger.error(f"批量TTS处理失败: {str(e)}", exc_info=True)
             raise HTTPException(status_code=500, detail=str(e))
     
     @router.get("/tts/voices")
     async def get_voices(
-        user: UserDict = Depends(require_user),
-        client: TTSMcpClient = Depends(get_tts_client)
+        user: UserDict = Depends(require_user)
     ):
         """获取可用语音列表"""
-        try:
-            voices = await client.get_available_voices()
-            return {"voices": voices}
-        except Exception as e:
-            logger.error(f"获取语音列表失败: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+        # 目前只有一个语音
+        voices = [
+            {"id": "zf_001", "name": "普通话女声", "description": "标准普通话女声"}
+        ]
+        return {"voices": voices}
     
     @router.get("/tts/info")
     async def get_service_info(
         user: UserDict = Depends(require_user),
-        client: TTSMcpClient = Depends(get_tts_client)
+        service_manager: TTSServiceManager = Depends(get_service_manager)
     ):
         """获取服务信息"""
-        try:
-            info = await client.get_service_info()
-            return info
-        except Exception as e:
-            logger.error(f"获取服务信息失败: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "service": "illufly-tts-service",
+            "version": "0.3.0",
+            "model": repo_id,
+            "device": device or "auto",
+            "batch_size": batch_size,
+            "max_wait_time": max_wait_time,
+            "chunk_size": chunk_size
+        }
     
     # 注册路由
     app.include_router(router, prefix=prefix)
     
-    # 在应用关闭时关闭客户端
+    # 应用关闭时关闭服务
     @app.on_event("shutdown")
-    async def close_tts_client():
-        logger.info("关闭MCP客户端连接...")
-        await app.state.tts_client.close()
-    
-    return client
+    async def shutdown_service_manager():
+        if hasattr(app.state, "service_manager"):
+            logger.info("关闭TTS服务...")
+            await app.state.service_manager.shutdown()

@@ -1,0 +1,41 @@
+已启用调试输出，文件将保存到绝对路径: /Users/xuehongwei/codeup/illufly-tts/output
+调试目录已创建/确认: /Users/xuehongwei/codeup/illufly-tts/output
+测试文件写入成功: /Users/xuehongwei/codeup/illufly-tts/output/debug_test_file.txt
+2025-04-10 01:36:19,382 [INFO] illufly_tts - 启动TTS服务 - MCP子进程: /Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/bin/python -m illufly_tts.api.mcp_server --repo-id hexgrad/Kokoro-82M-v1.1-zh --batch-size=4 --max-wait-time=0.2 --chunk-size=200 --transport stdio
+2025-04-10 01:36:19,382 [INFO] illufly_tts.api.mcp_client - 初始化TTS MCP客户端: use_stdio=True
+2025-04-10 01:36:19,382 [INFO] illufly_tts.api.mcp_client - 准备使用子进程: /Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/bin/python -m illufly_tts.api.mcp_server --repo-id hexgrad/Kokoro-82M-v1.1-zh --batch-size=4 --max-wait-time=0.2 --chunk-size=200 --transport stdio
+2025-04-10 01:36:19,382 [INFO] illufly_tts.api.endpoints - 使用stdio传输连接到TTS服务: /Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/bin/python
+2025-04-10 01:36:19,387 [INFO] illufly_tts - 启动FastAPI服务 - 监听: 0.0.0.0:31572
+2025-04-10 01:36:19,388 [DEBUG] asyncio - Using selector: KqueueSelector
+INFO:     Started server process [62817]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:31572 (Press CTRL+C to quit)
+2025-04-10 01:36:22,008 [DEBUG] illufly_tts.api.mcp_client - 创建MCP连接...
+2025-04-10 01:36:22,008 [DEBUG] illufly_tts.api.mcp_client - 创建stdio连接: /Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/bin/python -m illufly_tts.api.mcp_server --repo-id hexgrad/Kokoro-82M-v1.1-zh --batch-size=4 --max-wait-time=0.2 --chunk-size=200 --transport stdio
+2025-04-10 01:36:22,038 [DEBUG] illufly_tts.api.mcp_client - 创建ClientSession...
+2025-04-10 01:36:22,039 [DEBUG] illufly_tts.api.mcp_client - 初始化ClientSession...
+<frozen runpy>:128: RuntimeWarning: 'illufly_tts.api.mcp_server' found in sys.modules after import of package 'illufly_tts.api', but prior to execution of 'illufly_tts.api.mcp_server'; this may result in unpredictable behaviour
+/Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/lib/python3.11/site-packages/torch/nn/modules/rnn.py:83: UserWarning: dropout option adds dropout after all but last recurrent layer, so non-zero dropout expects num_layers greater than 1, but got dropout=0.2 and num_layers=1
+  warnings.warn("dropout option adds dropout after all but last "
+/Users/xuehongwei/Library/Caches/pypoetry/virtualenvs/illufly-tts-2UsRzmew-py3.11/lib/python3.11/site-packages/torch/nn/utils/weight_norm.py:28: UserWarning: torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm.
+  warnings.warn("torch.nn.utils.weight_norm is deprecated in favor of torch.nn.utils.parametrizations.weight_norm.")
+2025-04-10 01:36:33,157 [INFO] illufly_tts.api.mcp_client - MCP客户端连接成功
+2025-04-10 01:36:33,157 [DEBUG] illufly_tts.api.mcp_client - 调用工具: text_to_speech, 参数: {"text": "\u8fd9\u662f\u4e00\u4e2a\u6d4b\u8bd5\u97f3\u9891\uff0c\u7528\u4e8e\u9a8c\u8bc1TTS\u670d\u52a1\u3002", "voice": "zf_001"}
+Fetching 112 files:   0%|          | 0/112 [00:00<?, ?it/s]Fetching 112 files: 100%|██████████| 112/112 [00:00<00:00, 9929.03it/s]
+2025-04-10 01:36:34,150 [DEBUG] illufly_tts.api.mcp_client - 工具返回类型: <class 'mcp.types.CallToolResult'>
+2025-04-10 01:36:34,150 [DEBUG] illufly_tts.api.mcp_client - 提取到结果内容（前100字符）: {"status": "error", "error": "处理失败"}...
+INFO:     127.0.0.1:57418 - "GET /download-sample HTTP/1.1" 200 OK
+2025-04-10 01:36:34,159 [INFO] illufly_tts.api.endpoints - TTS客户端连接初始化成功
+2025-04-10 01:36:34,161 [DEBUG] illufly_tts.api.mcp_client - 调用工具: text_to_speech, 参数: {"text": "\u8fd9\u662f\u4e00\u4e2a\u6d4b\u8bd5\u6587\u672c\uff0c\u7528\u4e8e\u751f\u6210\u8c03\u8bd5\u6587\u4ef6\u3002\u8fd9\u662f\u4e00\u4e2a\u6d4b\u8bd5\u6587\u672c\uff0c\u7528\u4e8e\u751f\u6210\u8c03\u8bd5\u6587\u4ef6\u3002\u8fd9\u662f\u4e00\u4e2a\u6d4b\u8bd5\u6587\u672c\uff0c\u7528\u4e8e\u751f\u6210\u8c03\u8bd5\u6587\u4ef6\u3002", "voice": "zf_001"}
+2025-04-10 01:36:34,470 [DEBUG] illufly_tts.api.mcp_client - 工具返回类型: <class 'mcp.types.CallToolResult'>
+2025-04-10 01:36:34,470 [DEBUG] illufly_tts.api.mcp_client - 提取到结果内容（前100字符）: {"status": "error", "error": "处理失败"}...
+2025-04-10 01:36:34,470 [ERROR] illufly_tts.api.endpoints - TTS调用失败: 400: 处理失败
+INFO:     127.0.0.1:57580 - "POST /api/tts HTTP/1.1" 500 Internal Server Error
+2025-04-10 01:36:39,691 [DEBUG] illufly_tts.api.mcp_client - 调用工具: text_to_speech, 参数: {"text": "\u6211\u662f\u4e00\u4e2a\u4eba\u5de5\u667a\u80fd\u52a9\u624b\uff0chello china", "voice": "zf_001"}
+2025-04-10 01:36:39,998 [DEBUG] illufly_tts.api.mcp_client - 工具返回类型: <class 'mcp.types.CallToolResult'>
+2025-04-10 01:36:39,998 [DEBUG] illufly_tts.api.mcp_client - 提取到结果内容（前100字符）: {"status": "error", "error": "处理失败"}...
+2025-04-10 01:36:39,998 [ERROR] illufly_tts.api.endpoints - TTS调用失败: 400: 处理失败
+INFO:     127.0.0.1:57645 - "POST /api/tts HTTP/1.1" 500 Internal Server Error
+/Users/xuehongwei/.pyenv/versions/3.11.7/lib/python3.11/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
